@@ -97,9 +97,88 @@ const requirePermission = (permission) => {
   };
 };
 
+/**
+ * Require superadmin role — solo el dev puede acceder
+ */
+const requireSuperAdmin = (req, res, next) => {
+  if (!req.user || req.user.role !== 'superadmin') {
+    return forbidden(res, 'Superadmin access required');
+  }
+  next();
+};
+
+/**
+ * Limites del plan para usuarios normales (role: 'user')
+ * superadmin y admin no tienen limites
+ */
+const PLAN_LIMITS = {
+  maxApps: 3,
+  maxLicensesPerGeneration: 10,
+  maxUsersPerApp: 10,
+};
+
+const checkPlanLimits = (type) => {
+  return async (req, res, next) => {
+    // superadmin y admin sin limites
+    if (!req.user || req.user.role === 'superadmin' || req.user.role === 'admin') {
+      return next();
+    }
+
+    try {
+      if (type === 'apps') {
+        const Application = require('../models/Application');
+        const count = await Application.countDocuments({ ownerId: req.user._id });
+        if (count >= PLAN_LIMITS.maxApps) {
+          return forbidden(res, `Free plan limit: maximum ${PLAN_LIMITS.maxApps} applications allowed`);
+        }
+      }
+
+      if (type === 'licenses') {
+        const count = parseInt(req.body.count) || 1;
+        if (count > PLAN_LIMITS.maxLicensesPerGeneration) {
+          return forbidden(res, `Free plan limit: maximum ${PLAN_LIMITS.maxLicensesPerGeneration} licenses per generation`);
+        }
+        // Verificar total de licencias en la app
+        const License = require('../models/License');
+        const Application = require('../models/Application');
+        const app = await Application.findOne({ _id: req.body.appId, ownerId: req.user._id });
+        if (app) {
+          const total = await License.countDocuments({ appId: app._id });
+          if (total + count > PLAN_LIMITS.maxLicensesPerGeneration) {
+            return forbidden(res, `Free plan limit: maximum ${PLAN_LIMITS.maxLicensesPerGeneration} total licenses per application`);
+          }
+        }
+      }
+
+      if (type === 'users') {
+        const AppUser = require('../models/AppUser');
+        const Application = require('../models/Application');
+        const appId = req.body.appId || req.query.appId;
+        if (appId) {
+          const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
+          if (app) {
+            const count = await AppUser.countDocuments({ appId: app._id });
+            if (count >= PLAN_LIMITS.maxUsersPerApp) {
+              return forbidden(res, `Free plan limit: maximum ${PLAN_LIMITS.maxUsersPerApp} users per application`);
+            }
+          }
+        }
+      }
+
+      next();
+    } catch (err) {
+      console.error('checkPlanLimits error:', err);
+      next();
+    }
+  };
+};
+
 module.exports = {
   authenticate,
   requireAdmin,
+  requireSuperAdmin,
   requireAdminOrManager,
   requirePermission,
+  checkPlanLimits,
+  PLAN_LIMITS,
 };

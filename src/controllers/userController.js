@@ -8,6 +8,7 @@ const {
   created,
   badRequest,
   notFound,
+  forbidden,
   conflict,
   serverError,
 } = require('../utils/apiResponse');
@@ -26,6 +27,12 @@ const createUser = async (req, res) => {
 
     const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
     if (!app) return notFound(res, 'Application not found');
+
+    // Limite para usuarios normales
+    if (req.user.role === 'user' || req.user.role === 'manager') {
+      const count = await AppUser.countDocuments({ appId: app._id });
+      if (count >= 10) return forbidden(res, 'Free plan limit: maximum 10 users per application');
+    }
 
     const existing = await AppUser.findOne({ username, appId: app._id });
     if (existing) return conflict(res, 'Username already exists in this application');

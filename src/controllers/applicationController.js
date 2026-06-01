@@ -28,6 +28,14 @@ const createApp = async (req, res) => {
       return badRequest(res, 'Application name is required');
     }
 
+    // Limite de apps para usuarios normales (superadmin/admin sin limite)
+    if (req.user.role === 'user' || req.user.role === 'manager') {
+      const count = await Application.countDocuments({ ownerId: req.user._id });
+      if (count >= 3) {
+        return forbidden(res, 'Free plan limit: maximum 3 applications allowed');
+      }
+    }
+
     const app = await Application.create({
       name,
       version: version || '1.0.0',
@@ -55,7 +63,8 @@ const createApp = async (req, res) => {
  */
 const getApps = async (req, res) => {
   try {
-    const query = req.user.role === 'admin' ? { ownerId: req.user._id } : {};
+    // Siempre filtrar por ownerId — superadmin solo ve sus propias apps
+    const query = { ownerId: req.user._id };
     const apps = await Application.find(query).sort({ createdAt: -1 });
 
     // Attach counts
