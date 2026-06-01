@@ -415,6 +415,140 @@ const activateLicense = async (req, res) => {
   }
 };
 
+/**
+ * POST /api/licenses/auth
+ * SDK endpoint: autenticar con solo licencia + HWID.
+ * Si la licencia esta unused la activa automaticamente (sin username/password).
+ * Si ya esta activa hace login directo.
+ */
+const authWithKey = async (req, res) => {
+  try {
+    const { licenseKey, hwid } = req.body;
+    const app = req.application;
+    const clientIp = req.ip;
+
+    if (!licenseKey) return badRequest(res, 'licenseKey is required');
+
+    const license = await License.findOne({
+      key: licenseKey.toUpperCase(),
+      appId: app._id,
+    }).populate('subscription');
+
+    if (!license) {
+      await Log.create({ appId: app._id, event: 'login_failed', description: `Invalid license key: ${licenseKey}`, ip: clientIp });
+      return notFound(res, 'License key not found');
+    }
+
+    if (license.status === 'banned') {
+      await Log.create({ appId: app._id, event: 'login_failed', description: `Banned license: ${licenseKey}`, ip: clientIp });
+      return forbidden(res, 'This license key has been banned');
+    }
+
+    if (license.status === 'expired') {
+      return forbidden(res, 'License key has expired');
+    }
+
+    const hashedHwid = hwid ? processHWID(hwid) : null;
+
+    // ── Activacion automatica si esta sin usar ────────────────
+    if (license.status === 'unused') {
+      // Usar los primeros 20 chars de la licencia como username (cumple min 3 / max 30)
+      const autoUsername = licenseKey.toUpperCase().replace(/[^A-Z0-9]/g, '').substring(0, 20);
+      // Password = hash del HWID o de la licencia si no hay HWID
+      const autoPassword = hwid ? hwid.substring(0, 30) : licenseKey.substring(0, 30);
+
+      // Verificar que no exista ya un usuario con ese username en esta app
+      let appUser = await AppUser.findOne({ username: autoUsername, appId: app._id });
+
+      if (!appUser) {
+        const expiresAt = license.durationUnit === 'lifetime'
+          ? null
+          : License.calculateExpiry(license.duration, license.durationUnit);
+
+        appUser = await AppUser.create({
+          username: autoUsername,
+          password: autoPassword,
+          appId: app._id,
+          subscription: license.subscription ? license.subscription._id : null,
+          expiresAt,
+          hwid: hashedHwid,
+          ip: clientIp,
+          licenseKey: license.key,
+        });
+
+        license.status   = 'active';
+        license.usedBy   = appUser._id;
+        license.usedAt   = new Date();
+        license.expiresAt = appUser.expiresAt;
+        license.hwid     = hashedHwid;
+        await license.save();
+
+        await Log.create({
+          appId: app._id,
+          userId: appUser._id,
+          event: 'license_activated',
+          description: `Auto-activated license ${licenseKey}`,
+          ip: clientIp,
+        });
+
+        if (app.webhookUrl) {
+          notifyLicenseActivated(app.webhookUrl, { licenseKey, username: autoUsername, ip: clientIp, appName: app.name });
+        }
+      }
+    }
+
+    // ── Login ─────────────────────────────────────────────────
+    // Verificar expiry
+    if (license.durationUnit !== 'lifetime' && license.expiresAt && new Date() > license.expiresAt) {
+      license.status = 'expired';
+      await license.save();
+      return forbidden(res, 'License key has expired');
+    }
+
+    // HWID check
+    if (app.hwidLock && hashedHwid && license.hwid && license.hwid !== hashedHwid) {
+      await Log.create({ appId: app._id, event: 'hwid_error', description: `HWID mismatch: ${licenseKey}`, ip: clientIp });
+      if (app.webhookUrl) notifyHWIDError(app.webhookUrl, { username: licenseKey, ip: clientIp, appName: app.name });
+      return forbidden(res, 'HWID mismatch');
+    }
+
+    const appUser = await AppUser.findById(license.usedBy);
+    if (appUser) {
+      if (appUser.status === 'banned') {
+        return forbidden(res, `User is banned: ${appUser.banReason || 'Contact support'}`);
+      }
+      appUser.lastLogin = new Date();
+      appUser.ip = clientIp;
+      await appUser.save();
+    }
+
+    await Log.create({
+      appId: app._id,
+      userId: appUser ? appUser._id : null,
+      event: 'login_success',
+      description: `Key login: ${licenseKey}`,
+      ip: clientIp,
+    });
+
+    return success(res, {
+      valid: true,
+      license: {
+        key: license.key,
+        status: license.status,
+        expiresAt: license.expiresAt,
+        durationUnit: license.durationUnit,
+        subscription: license.subscription,
+      },
+      user: appUser || null,
+    }, 'Authentication successful');
+
+  } catch (err) {
+    console.error('authWithKey error:', err);
+    if (err.code === 11000) return conflict(res, 'Username conflict, try again');
+    return serverError(res, 'Authentication failed');
+  }
+};
+
 module.exports = {
   generateLicenses,
   getLicenses,
@@ -426,4 +560,5 @@ module.exports = {
   loginWithLicense,
   checkLicense,
   activateLicense,
+  authWithKey,
 };

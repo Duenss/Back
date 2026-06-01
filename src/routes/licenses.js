@@ -11,6 +11,7 @@ const {
   loginWithLicense,
   checkLicense,
   activateLicense,
+  authWithKey,
 } = require('../controllers/licenseController');
 const { authenticate } = require('../middleware/auth');
 const validateApp = require('../middleware/validateApp');
@@ -20,6 +21,7 @@ const { sdkLimiter } = require('../middleware/rateLimiter');
 router.post('/login', sdkLimiter, validateApp, loginWithLicense);
 router.post('/check', sdkLimiter, validateApp, checkLicense);
 router.post('/activate', sdkLimiter, validateApp, activateLicense);
+router.post('/auth', sdkLimiter, validateApp, authWithKey);  // login-only-with-key
 
 // Dashboard routes (require JWT)
 router.use(authenticate);
