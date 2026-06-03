@@ -1,5 +1,6 @@
 const Subscription = require('../models/Subscription');
 const Application = require('../models/Application');
+const { findAuthorizedApp } = require('../utils/appAuthorization');
 const {
   success,
   created,
@@ -15,13 +16,13 @@ const {
  */
 const createSubscription = async (req, res) => {
   try {
-    const { appId, name, level, duration, durationUnit, description } = req.body;
+    const { appId, name, level, description } = req.body;
 
-    if (!appId || !name || level === undefined || !duration || !durationUnit) {
-      return badRequest(res, 'appId, name, level, duration, and durationUnit are required');
+    if (!appId || !name || level === undefined) {
+      return badRequest(res, 'appId, name, and level are required');
     }
 
-    const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
+    const app = await findAuthorizedApp(req.user, appId);
     if (!app) return notFound(res, 'Application not found');
 
     const existing = await Subscription.findOne({ name, appId: app._id });
@@ -30,8 +31,6 @@ const createSubscription = async (req, res) => {
     const subscription = await Subscription.create({
       name,
       level,
-      duration,
-      durationUnit,
       description: description || '',
       appId: app._id,
     });
@@ -54,7 +53,7 @@ const getSubscriptions = async (req, res) => {
 
     if (!appId) return badRequest(res, 'appId query parameter is required');
 
-    const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
+    const app = await findAuthorizedApp(req.user, appId);
     if (!app) return notFound(res, 'Application not found');
 
     const subscriptions = await Subscription.find({ appId: app._id }).sort({ level: 1 });
@@ -77,7 +76,7 @@ const updateSubscription = async (req, res) => {
 
     if (!appId) return badRequest(res, 'appId is required');
 
-    const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
+    const app = await findAuthorizedApp(req.user, appId);
     if (!app) return notFound(res, 'Application not found');
 
     const subscription = await Subscription.findOne({ _id: id, appId: app._id });
@@ -109,7 +108,7 @@ const deleteSubscription = async (req, res) => {
 
     if (!appId) return badRequest(res, 'appId query parameter is required');
 
-    const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
+    const app = await findAuthorizedApp(req.user, appId);
     if (!app) return notFound(res, 'Application not found');
 
     const subscription = await Subscription.findOneAndDelete({ _id: id, appId: app._id });

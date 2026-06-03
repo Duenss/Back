@@ -4,6 +4,9 @@ const {
   generateLicenses,
   getLicenses,
   deleteLicense,
+  resetLicenseHwid,
+  pauseLicense,
+  banLicense,
   deleteAllLicenses,
   deleteUsedLicenses,
   deleteUnusedLicenses,
@@ -28,6 +31,9 @@ router.use(authenticate);
 
 router.get('/', getLicenses);
 router.post('/generate', generateLicenses);
+router.post('/:key/reset-hwid', resetLicenseHwid);
+router.post('/:key/pause', pauseLicense);
+router.post('/:key/ban', banLicense);
 
 // Bulk delete routes
 router.delete('/bulk/all', deleteAllLicenses);

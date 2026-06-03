@@ -36,6 +36,7 @@ const authenticate = async (req, res, next) => {
         return unauthorized(res, 'User not found');
       }
       user.isManager = true;
+      user.role = 'manager';
     }
 
     if (user.isBanned) {
@@ -54,7 +55,7 @@ const authenticate = async (req, res, next) => {
  * Require admin role
  */
 const requireAdmin = (req, res, next) => {
-  if (!req.user || req.user.role !== 'admin') {
+  if (!req.user || (req.user.role !== 'admin' && req.user.role !== 'superadmin')) {
     return forbidden(res, 'Admin access required');
   }
   next();
@@ -140,8 +141,8 @@ const checkPlanLimits = (type) => {
         }
         // Verificar total de licencias en la app
         const License = require('../models/License');
-        const Application = require('../models/Application');
-        const app = await Application.findOne({ _id: req.body.appId, ownerId: req.user._id });
+        const { findAuthorizedApp } = require('../utils/appAuthorization');
+        const app = await findAuthorizedApp(req.user, req.body.appId);
         if (app) {
           const total = await License.countDocuments({ appId: app._id });
           if (total + count > PLAN_LIMITS.maxLicensesPerGeneration) {
@@ -152,10 +153,10 @@ const checkPlanLimits = (type) => {
 
       if (type === 'users') {
         const AppUser = require('../models/AppUser');
-        const Application = require('../models/Application');
+        const { findAuthorizedApp } = require('../utils/appAuthorization');
         const appId = req.body.appId || req.query.appId;
         if (appId) {
-          const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
+          const app = await findAuthorizedApp(req.user, appId);
           if (app) {
             const count = await AppUser.countDocuments({ appId: app._id });
             if (count >= PLAN_LIMITS.maxUsersPerApp) {

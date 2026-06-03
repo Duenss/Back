@@ -15,13 +15,11 @@ const subscriptionSchema = new mongoose.Schema(
     },
     duration: {
       type: Number,
-      required: [true, 'Duration is required'],
       min: [1, 'Duration must be at least 1'],
     },
     durationUnit: {
       type: String,
-      enum: ['hours', 'days', 'months', 'lifetime'],
-      required: [true, 'Duration unit is required'],
+      enum: ['hours', 'days', 'months', 'years', 'lifetime'],
     },
     description: {
       type: String,
@@ -41,5 +39,4 @@ const subscriptionSchema = new mongoose.Schema(
 
 // Compound index: subscription names must be unique per app
 subscriptionSchema.index({ name: 1, appId: 1 }, { unique: true });
-
 module.exports = mongoose.model('Subscription', subscriptionSchema);

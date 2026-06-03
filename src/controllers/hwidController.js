@@ -3,6 +3,7 @@ const License = require('../models/License');
 const Application = require('../models/Application');
 const Log = require('../models/Log');
 const { processHWID } = require('../utils/hwidGenerator');
+const { findAuthorizedApp } = require('../utils/appAuthorization');
 const { success, badRequest, notFound, serverError } = require('../utils/apiResponse');
 
 /**
@@ -17,7 +18,7 @@ const checkHWID = async (req, res) => {
       return badRequest(res, 'appId, userId, and hwid are required');
     }
 
-    const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
+    const app = await findAuthorizedApp(req.user, appId);
     if (!app) return notFound(res, 'Application not found');
 
     const user = await AppUser.findOne({ _id: userId, appId: app._id });
@@ -45,7 +46,7 @@ const resetHWID = async (req, res) => {
       return badRequest(res, 'appId and userId are required');
     }
 
-    const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
+    const app = await findAuthorizedApp(req.user, appId);
     if (!app) return notFound(res, 'Application not found');
 
     const user = await AppUser.findOne({ _id: userId, appId: app._id });
@@ -84,7 +85,7 @@ const banHWID = async (req, res) => {
       return badRequest(res, 'appId and hwid are required');
     }
 
-    const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
+    const app = await findAuthorizedApp(req.user, appId);
     if (!app) return notFound(res, 'Application not found');
 
     const hashedHwid = processHWID(hwid);
@@ -122,7 +123,7 @@ const unbanHWID = async (req, res) => {
       return badRequest(res, 'appId and hwid are required');
     }
 
-    const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
+    const app = await findAuthorizedApp(req.user, appId);
     if (!app) return notFound(res, 'Application not found');
 
     const hashedHwid = processHWID(hwid);

@@ -1,6 +1,7 @@
 const Variable = require('../models/Variable');
 const Application = require('../models/Application');
 const Log = require('../models/Log');
+const { findAuthorizedApp } = require('../utils/appAuthorization');
 const {
   success,
   created,
@@ -22,7 +23,7 @@ const createVariable = async (req, res) => {
       return badRequest(res, 'appId, name, and value are required');
     }
 
-    const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
+    const app = await findAuthorizedApp(req.user, appId);
     if (!app) return notFound(res, 'Application not found');
 
     const existing = await Variable.findOne({ name, appId: app._id });
@@ -60,7 +61,7 @@ const getVariables = async (req, res) => {
 
     if (!appId) return badRequest(res, 'appId query parameter is required');
 
-    const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
+    const app = await findAuthorizedApp(req.user, appId);
     if (!app) return notFound(res, 'Application not found');
 
     const variables = await Variable.find({ appId: app._id }).sort({ name: 1 });
@@ -83,7 +84,7 @@ const getVariable = async (req, res) => {
 
     if (!appId) return badRequest(res, 'appId query parameter is required');
 
-    const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
+    const app = await findAuthorizedApp(req.user, appId);
     if (!app) return notFound(res, 'Application not found');
 
     const variable = await Variable.findOne({ _id: id, appId: app._id });
@@ -126,7 +127,7 @@ const updateVariable = async (req, res) => {
 
     if (!appId) return badRequest(res, 'appId is required');
 
-    const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
+    const app = await findAuthorizedApp(req.user, appId);
     if (!app) return notFound(res, 'Application not found');
 
     const variable = await Variable.findOne({ _id: id, appId: app._id });
@@ -161,7 +162,7 @@ const deleteVariable = async (req, res) => {
 
     if (!appId) return badRequest(res, 'appId query parameter is required');
 
-    const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
+    const app = await findAuthorizedApp(req.user, appId);
     if (!app) return notFound(res, 'Application not found');
 
     const variable = await Variable.findOneAndDelete({ _id: id, appId: app._id });

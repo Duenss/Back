@@ -35,6 +35,16 @@ const managerSchema = new mongoose.Schema(
       ref: 'Application',
       default: [],
     },
+    description: {
+      type: String,
+      default: '',
+      maxlength: [300, 'Description cannot exceed 300 characters'],
+    },
+    allowedSubscriptions: {
+      type: [mongoose.Schema.Types.ObjectId],
+      ref: 'Subscription',
+      default: [],
+    },
     permissions: {
       createUsers: { type: Boolean, default: false },
       createLicenses: { type: Boolean, default: false },

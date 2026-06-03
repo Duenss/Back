@@ -3,6 +3,7 @@ const Application = require('../models/Application');
 const AppUser = require('../models/AppUser');
 const Subscription = require('../models/Subscription');
 const Log = require('../models/Log');
+const { findAuthorizedApp } = require('../utils/appAuthorization');
 const { generateLicenseKeys } = require('../utils/licenseGenerator');
 const { processHWID } = require('../utils/hwidGenerator');
 const { notifyLicenseActivated, notifyLicenseGenerated, notifyHWIDError } = require('../utils/discordWebhook');
@@ -22,12 +23,23 @@ const {
  */
 const generateLicenses = async (req, res) => {
   try {
-    const { appId, count = 1, mask = 'XXXX-XXXX-XXXX-XXXX', subscriptionId, duration, durationUnit, note } = req.body;
+    const {
+      appId,
+      count: rawCount,
+      quantity,
+      mask = 'XXXX-XXXX-XXXX-XXXX',
+      subscriptionId,
+      duration,
+      durationUnit,
+      useUppercase = true,
+      useLowercase = false,
+      note,
+    } = req.body;
 
-    if (!appId) return badRequest(res, 'appId is required');
-    if (count < 1 || count > 1000) return badRequest(res, 'Count must be between 1 and 1000');
+    const count = parseInt(rawCount ?? quantity ?? 1, 10);
+    if (Number.isNaN(count) || count < 1 || count > 1000) return badRequest(res, 'Count must be between 1 and 1000');
 
-    const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
+    const app = await findAuthorizedApp(req.user, appId);
     if (!app) return notFound(res, 'Application not found');
 
     // Limite para usuarios normales
@@ -52,10 +64,15 @@ const generateLicenses = async (req, res) => {
 
     // Get existing keys to avoid duplicates
     const existingKeys = await License.find({ appId: app._id }).distinct('key');
-    const keys = generateLicenseKeys(count, mask, existingKeys);
+    const keys = generateLicenseKeys(count, mask, existingKeys, {
+      uppercase: useUppercase,
+      lowercase: useLowercase,
+      numbers: true,
+    });
 
     const licenses = keys.map((key) => ({
       key,
+      keyNormalized: key.toUpperCase(),
       appId: app._id,
       subscription: subscription ? subscription._id : null,
       duration: resolvedDuration || null,
@@ -94,7 +111,7 @@ const getLicenses = async (req, res) => {
 
     if (!appId) return badRequest(res, 'appId query parameter is required');
 
-    const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
+    const app = await findAuthorizedApp(req.user, appId);
     if (!app) return notFound(res, 'Application not found');
 
     const filter = { appId: app._id };
@@ -137,16 +154,94 @@ const deleteLicense = async (req, res) => {
 
     if (!appId) return badRequest(res, 'appId query parameter is required');
 
-    const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
+    const app = await findAuthorizedApp(req.user, appId);
     if (!app) return notFound(res, 'Application not found');
 
-    const license = await License.findOneAndDelete({ key: key.toUpperCase(), appId: app._id });
+    const license = await License.findOneAndDelete({ keyNormalized: key.toUpperCase(), appId: app._id });
     if (!license) return notFound(res, 'License not found');
 
     return success(res, null, 'License deleted');
   } catch (err) {
     console.error('deleteLicense error:', err);
     return serverError(res, 'Failed to delete license');
+  }
+};
+
+/**
+ * POST /api/licenses/:key/reset-hwid
+ */
+const resetLicenseHwid = async (req, res) => {
+  try {
+    const { key } = req.params;
+    const { appId } = req.query;
+    if (!appId) return badRequest(res, 'appId query parameter is required');
+
+    const app = await findAuthorizedApp(req.user, appId);
+    if (!app) return notFound(res, 'Application not found');
+
+    const license = await License.findOne({ keyNormalized: key.toUpperCase(), appId: app._id });
+    if (!license) return notFound(res, 'License not found');
+
+    license.hwid = null;
+    await license.save();
+
+    return success(res, null, 'HWID reset successfully');
+  } catch (err) {
+    console.error('resetLicenseHwid error:', err);
+    return serverError(res, 'Failed to reset HWID');
+  }
+};
+
+/**
+ * POST /api/licenses/:key/pause
+ */
+const pauseLicense = async (req, res) => {
+  try {
+    const { key } = req.params;
+    const { appId } = req.query;
+    if (!appId) return badRequest(res, 'appId query parameter is required');
+
+    const app = await findAuthorizedApp(req.user, appId);
+    if (!app) return notFound(res, 'Application not found');
+
+    const license = await License.findOne({ keyNormalized: key.toUpperCase(), appId: app._id });
+    if (!license) return notFound(res, 'License not found');
+    if (license.status === 'banned') return badRequest(res, 'Cannot pause a banned license');
+    if (license.status === 'expired') return badRequest(res, 'License is already paused/expired');
+
+    license.status = 'expired';
+    await license.save();
+
+    return success(res, null, 'License paused successfully');
+  } catch (err) {
+    console.error('pauseLicense error:', err);
+    return serverError(res, 'Failed to pause license');
+  }
+};
+
+/**
+ * POST /api/licenses/:key/ban
+ */
+const banLicense = async (req, res) => {
+  try {
+    const { key } = req.params;
+    const { appId } = req.query;
+    if (!appId) return badRequest(res, 'appId query parameter is required');
+
+    const app = await findAuthorizedApp(req.user, appId);
+    if (!app) return notFound(res, 'Application not found');
+
+    const license = await License.findOne({ keyNormalized: key.toUpperCase(), appId: app._id });
+    if (!license) return notFound(res, 'License not found');
+    if (license.status === 'banned') return badRequest(res, 'License is already banned');
+
+    license.status = 'banned';
+    await license.save();
+
+    return success(res, null, 'License banned successfully');
+  } catch (err) {
+    console.error('banLicense error:', err);
+    return serverError(res, 'Failed to ban license');
   }
 };
 
@@ -158,7 +253,7 @@ const deleteAllLicenses = async (req, res) => {
     const { appId } = req.body;
     if (!appId) return badRequest(res, 'appId is required');
 
-    const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
+    const app = await findAuthorizedApp(req.user, appId);
     if (!app) return notFound(res, 'Application not found');
 
     const result = await License.deleteMany({ appId: app._id });
@@ -176,7 +271,7 @@ const deleteUsedLicenses = async (req, res) => {
     const { appId } = req.body;
     if (!appId) return badRequest(res, 'appId is required');
 
-    const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
+    const app = await findAuthorizedApp(req.user, appId);
     if (!app) return notFound(res, 'Application not found');
 
     const result = await License.deleteMany({ appId: app._id, status: 'active' });
@@ -194,7 +289,7 @@ const deleteUnusedLicenses = async (req, res) => {
     const { appId } = req.body;
     if (!appId) return badRequest(res, 'appId is required');
 
-    const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
+    const app = await findAuthorizedApp(req.user, appId);
     if (!app) return notFound(res, 'Application not found');
 
     const result = await License.deleteMany({ appId: app._id, status: 'unused' });
@@ -212,7 +307,7 @@ const deleteExpiredLicenses = async (req, res) => {
     const { appId } = req.body;
     if (!appId) return badRequest(res, 'appId is required');
 
-    const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
+    const app = await findAuthorizedApp(req.user, appId);
     if (!app) return notFound(res, 'Application not found');
 
     const result = await License.deleteMany({ appId: app._id, status: 'expired' });
@@ -236,7 +331,7 @@ const loginWithLicense = async (req, res) => {
     if (!licenseKey) return badRequest(res, 'licenseKey is required');
 
     const license = await License.findOne({
-      key: licenseKey.toUpperCase(),
+      keyNormalized: licenseKey.toUpperCase(),
       appId: app._id,
     }).populate('subscription');
 
@@ -322,7 +417,7 @@ const checkLicense = async (req, res) => {
     if (!licenseKey) return badRequest(res, 'licenseKey is required');
 
     const license = await License.findOne({
-      key: licenseKey.toUpperCase(),
+      keyNormalized: licenseKey.toUpperCase(),
       appId: app._id,
     }).populate('subscription', 'name level');
 
@@ -360,7 +455,7 @@ const activateLicense = async (req, res) => {
     }
 
     const license = await License.findOne({
-      key: licenseKey.toUpperCase(),
+      keyNormalized: licenseKey.toUpperCase(),
       appId: app._id,
     }).populate('subscription');
 
@@ -437,7 +532,7 @@ const authWithKey = async (req, res) => {
     if (!licenseKey) return badRequest(res, 'licenseKey is required');
 
     const license = await License.findOne({
-      key: licenseKey.toUpperCase(),
+      keyNormalized: licenseKey.toUpperCase(),
       appId: app._id,
     }).populate('subscription');
 
@@ -560,6 +655,9 @@ module.exports = {
   generateLicenses,
   getLicenses,
   deleteLicense,
+  resetLicenseHwid,
+  pauseLicense,
+  banLicense,
   deleteAllLicenses,
   deleteUsedLicenses,
   deleteUnusedLicenses,

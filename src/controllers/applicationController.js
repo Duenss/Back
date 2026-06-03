@@ -5,6 +5,7 @@ const AppUser = require('../models/AppUser');
 const Log = require('../models/Log');
 const Variable = require('../models/Variable');
 const Subscription = require('../models/Subscription');
+const { findAuthorizedApp, findAuthorizedApps } = require('../utils/appAuthorization');
 const { sendWebhook } = require('../utils/discordWebhook');
 const {
   success,
@@ -63,11 +64,8 @@ const createApp = async (req, res) => {
  */
 const getApps = async (req, res) => {
   try {
-    // Siempre filtrar por ownerId — superadmin solo ve sus propias apps
-    const query = { ownerId: req.user._id };
-    const apps = await Application.find(query).sort({ createdAt: -1 });
+    const apps = await findAuthorizedApps(req.user);
 
-    // Attach counts
     const appsWithCounts = await Promise.all(
       apps.map(async (app) => {
         const [userCount, licenseCount] = await Promise.all([
@@ -92,15 +90,12 @@ const getApps = async (req, res) => {
 const getApp = async (req, res) => {
   try {
     const { id } = req.params;
-    const app = await Application.findOne({
-      $or: [{ _id: id.match(/^[0-9a-fA-F]{24}$/) ? id : null }, { appId: id }],
-      ownerId: req.user._id,
-    }).select('+appSecret');
-
+    const app = await findAuthorizedApp(req.user, id);
     if (!app) {
       return notFound(res, 'Application not found');
     }
 
+    const appWithSecret = await Application.findById(app._id).select('+appSecret');
     const [userCount, licenseCount, activeUsers] = await Promise.all([
       AppUser.countDocuments({ appId: app._id }),
       License.countDocuments({ appId: app._id }),
@@ -109,7 +104,13 @@ const getApp = async (req, res) => {
 
     return success(
       res,
-      { ...app.toObject(), userCount, licenseCount, activeUsers },
+      {
+        ...app.toObject(),
+        appSecret: appWithSecret?.appSecret,
+        userCount,
+        licenseCount,
+        activeUsers,
+      },
       'Application retrieved'
     );
   } catch (err) {
@@ -127,10 +128,7 @@ const updateApp = async (req, res) => {
     const { id } = req.params;
     const { name, version, webhookUrl, hwidLock, allowMultipleSessions } = req.body;
 
-    const app = await Application.findOne({
-      _id: id,
-      ownerId: req.user._id,
-    });
+    const app = await findAuthorizedApp(req.user, id);
 
     if (!app) {
       return notFound(res, 'Application not found');
@@ -159,11 +157,7 @@ const deleteApp = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const app = await Application.findOne({ _id: id, ownerId: req.user._id });
-    if (!app) {
-      return notFound(res, 'Application not found');
-    }
-
+    const app = await findAuthorizedApp(req.user, id);
     // Cascade delete all related data
     await Promise.all([
       License.deleteMany({ appId: app._id }),
@@ -183,6 +177,32 @@ const deleteApp = async (req, res) => {
 };
 
 /**
+ * GET /api/applications/:id/stats
+ * Get aggregated app statistics for the dashboard
+ */
+const getAppStats = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const app = await findAuthorizedApp(req.user, id);
+    if (!app) {
+      return notFound(res, 'Application not found');
+    }
+
+    const [totalLicenses, activeLicenses, expiredLicenses, totalUsers] = await Promise.all([
+      License.countDocuments({ appId: app._id }),
+      License.countDocuments({ appId: app._id, status: 'active' }),
+      License.countDocuments({ appId: app._id, status: 'expired' }),
+      AppUser.countDocuments({ appId: app._id }),
+    ]);
+
+    return success(res, { totalLicenses, activeLicenses, expiredLicenses, totalUsers }, 'App stats retrieved');
+  } catch (err) {
+    console.error('getAppStats error:', err);
+    return serverError(res, 'Failed to retrieve app stats');
+  }
+};
+
+/**
  * POST /api/applications/:id/regenerate-secret
  * Regenerate the application secret
  */
@@ -190,15 +210,20 @@ const regenerateSecret = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const app = await Application.findOne({ _id: id, ownerId: req.user._id }).select('+appSecret');
+    const app = await findAuthorizedApp(req.user, id);
     if (!app) {
       return notFound(res, 'Application not found');
     }
 
-    app.appSecret = uuidv4();
-    await app.save();
+    const appWithSecret = await Application.findById(app._id).select('+appSecret');
+    if (!appWithSecret) {
+      return notFound(res, 'Application not found');
+    }
 
-    return success(res, { appSecret: app.appSecret }, 'App secret regenerated. Update your SDK.');
+    appWithSecret.appSecret = uuidv4();
+    await appWithSecret.save();
+
+    return success(res, { appSecret: appWithSecret.appSecret }, 'App secret regenerated. Update your SDK.');
   } catch (err) {
     console.error('regenerateSecret error:', err);
     return serverError(res, 'Failed to regenerate secret');
@@ -213,12 +238,17 @@ const getAppSecret = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const app = await Application.findOne({ _id: id, ownerId: req.user._id }).select('+appSecret');
+    const app = await findAuthorizedApp(req.user, id);
     if (!app) {
       return notFound(res, 'Application not found');
     }
 
-    return success(res, { appSecret: app.appSecret }, 'App secret retrieved');
+    const appWithSecret = await Application.findById(app._id).select('+appSecret');
+    if (!appWithSecret) {
+      return notFound(res, 'Application not found');
+    }
+
+    return success(res, { appSecret: appWithSecret.appSecret }, 'App secret retrieved');
   } catch (err) {
     console.error('getAppSecret error:', err);
     return serverError(res, 'Failed to retrieve app secret');
@@ -233,7 +263,7 @@ const pauseApp = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const app = await Application.findOne({ _id: id, ownerId: req.user._id });
+    const app = await findAuthorizedApp(req.user, id);
     if (!app) {
       return notFound(res, 'Application not found');
     }
@@ -264,7 +294,7 @@ const testWebhook = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const app = await Application.findOne({ _id: id, ownerId: req.user._id });
+    const app = await findAuthorizedApp(req.user, id);
     if (!app) {
       return notFound(res, 'Application not found');
     }
@@ -301,6 +331,7 @@ module.exports = {
   createApp,
   getApps,
   getApp,
+  getAppStats,
   updateApp,
   deleteApp,
   regenerateSecret,

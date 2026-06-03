@@ -4,6 +4,7 @@ const {
   createApp,
   getApps,
   getApp,
+  getAppStats,
   updateApp,
   deleteApp,
   regenerateSecret,
@@ -24,6 +25,9 @@ router.post('/', createApp);
 
 // GET /api/applications/:id
 router.get('/:id', getApp);
+
+// GET /api/applications/:id/stats
+router.get('/:id/stats', getAppStats);
 
 // GET /api/applications/:id/secret
 router.get('/:id/secret', getAppSecret);

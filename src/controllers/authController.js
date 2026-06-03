@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const User = require('../models/User');
+const Manager = require('../models/Manager');
 const Application = require('../models/Application');
 const Log = require('../models/Log');
 const { notifyLogin, notifyLoginFailed } = require('../utils/discordWebhook');
@@ -72,15 +73,31 @@ const login = async (req, res) => {
     // identifier can be email or username
     const isEmail = id.includes('@');
     const query = isEmail ? { email: id.toLowerCase() } : { username: id };
-    const user = await User.findOne(query).select('+password');
+    let user = await User.findOne(query).select('+password');
+    let isManagerLogin = false;
+
+    if (!user) {
+      user = await Manager.findOne(query).select('+password');
+      if (user) {
+        isManagerLogin = true;
+        user.isManager = true;
+        user.role = 'manager';
+      }
+    }
 
     if (!user) {
       return unauthorized(res, 'Invalid credentials');
     }
 
+    if (isManagerLogin && !user.isActive) {
+      return unauthorized(res, 'Manager account is inactive');
+    }
+
     const isMatch = await user.comparePassword(password);
     if (!isMatch) {
-      const apps = await Application.find({ ownerId: user._id });
+      const apps = isManagerLogin
+        ? await Application.find({ _id: { $in: user.appIds || [] } })
+        : await Application.find({ ownerId: user._id });
       await Promise.all(
         apps.map(async (app) => {
           await Log.create({
@@ -103,7 +120,9 @@ const login = async (req, res) => {
     }
 
     if (user.isBanned) {
-      const apps = await Application.find({ ownerId: user._id });
+      const apps = isManagerLogin
+        ? await Application.find({ _id: { $in: user.appIds || [] } })
+        : await Application.find({ ownerId: user._id });
       await Promise.all(
         apps.map(async (app) => {
           await Log.create({
@@ -128,8 +147,10 @@ const login = async (req, res) => {
     user.lastLogin = new Date();
     await user.save({ validateBeforeSave: false });
 
-    const token = signToken(user._id, user.role);
-    const apps = await Application.find({ ownerId: user._id });
+    const token = signToken(user._id, user.role || (user.isManager ? 'manager' : undefined));
+    const apps = user.isManager
+      ? await Application.find({ _id: { $in: user.appIds || [] } })
+      : await Application.find({ ownerId: user._id });
     await Promise.all(
       apps.map(async (app) => {
         await Log.create({
@@ -175,13 +196,18 @@ const refreshToken = async (req, res) => {
       return unauthorized(res, 'Invalid token');
     }
 
-    const user = await User.findById(decoded.id);
+    let user = await User.findById(decoded.id).select('+password');
     if (!user) {
-      return unauthorized(res, 'User not found');
+      user = await Manager.findById(decoded.id);
+      if (!user) {
+        return unauthorized(res, 'User not found');
+      }
+      user.isManager = true;
+      user.role = 'manager';
     }
 
     if (user.isBanned) {
-      return unauthorized(res, 'Account is banned');
+      return unauthorized(res, `Account is banned: ${user.banReason || 'No reason provided'}`);
     }
 
     const newToken = signToken(user._id, user.role);
@@ -231,7 +257,9 @@ const forgotPassword = async (req, res) => {
  */
 const getMe = async (req, res) => {
   try {
-    return success(res, req.user, 'User retrieved');
+    // Return user with permissions included
+    const userData = req.user.toJSON ? req.user.toJSON() : req.user;
+    return success(res, userData, 'User retrieved');
   } catch (err) {
     return serverError(res, 'Failed to retrieve user');
   }

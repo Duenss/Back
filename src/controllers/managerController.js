@@ -15,7 +15,7 @@ const {
  */
 const createManager = async (req, res) => {
   try {
-    const { username, email, password, appIds = [], permissions = {} } = req.body;
+    const { username, email, password, appIds = [], permissions = {}, description = '', allowedSubscriptions = [] } = req.body;
 
     if (!username || !email || !password) {
       return badRequest(res, 'username, email, and password are required');
@@ -38,6 +38,8 @@ const createManager = async (req, res) => {
       password,
       ownerId: req.user._id,
       appIds,
+      description: description || '',
+      allowedSubscriptions: Array.isArray(allowedSubscriptions) ? allowedSubscriptions : [],
       permissions: {
         createUsers: permissions.createUsers || false,
         createLicenses: permissions.createLicenses || false,
@@ -63,6 +65,7 @@ const getManagers = async (req, res) => {
   try {
     const managers = await Manager.find({ ownerId: req.user._id })
       .populate('appIds', 'name appId status')
+      .populate('allowedSubscriptions', 'name level description')
       .sort({ createdAt: -1 });
 
     return success(res, managers);
@@ -79,7 +82,7 @@ const getManagers = async (req, res) => {
 const updateManager = async (req, res) => {
   try {
     const { id } = req.params;
-    const { appIds, permissions, isActive, password } = req.body;
+    const { appIds, permissions, isActive, password, description, allowedSubscriptions } = req.body;
 
     const manager = await Manager.findOne({ _id: id, ownerId: req.user._id });
     if (!manager) return notFound(res, 'Manager not found');
@@ -103,6 +106,9 @@ const updateManager = async (req, res) => {
         viewStats: permissions.viewStats ?? manager.permissions.viewStats,
       };
     }
+
+    if (description !== undefined) manager.description = description;
+    if (allowedSubscriptions !== undefined) manager.allowedSubscriptions = Array.isArray(allowedSubscriptions) ? allowedSubscriptions : manager.allowedSubscriptions;
 
     if (isActive !== undefined) manager.isActive = isActive;
     if (password) manager.password = password; // will be hashed by pre-save hook

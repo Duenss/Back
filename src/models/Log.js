@@ -54,6 +54,20 @@ const logSchema = new mongoose.Schema(
   }
 );
 
+const normalizeIp = (ip) => {
+  if (!ip) return null;
+  if (ip === '::1') return '127.0.0.1';
+  if (ip.startsWith('::ffff:')) return ip.replace('::ffff:', '');
+  return ip;
+};
+
+logSchema.pre('validate', function (next) {
+  if (this.ip) {
+    this.ip = normalizeIp(this.ip);
+  }
+  next();
+});
+
 logSchema.index({ appId: 1, createdAt: -1 });
 logSchema.index({ appId: 1, event: 1 });
 

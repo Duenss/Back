@@ -1,5 +1,6 @@
 const Log = require('../models/Log');
 const Application = require('../models/Application');
+const { findAuthorizedApp } = require('../utils/appAuthorization');
 const { success, badRequest, notFound, serverError } = require('../utils/apiResponse');
 
 /**
@@ -12,7 +13,7 @@ const getLogs = async (req, res) => {
 
     if (!appId) return badRequest(res, 'appId query parameter is required');
 
-    const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
+    const app = await findAuthorizedApp(req.user, appId);
     if (!app) return notFound(res, 'Application not found');
 
     const filter = { appId: app._id };
@@ -58,7 +59,7 @@ const clearLogs = async (req, res) => {
 
     if (!appId) return badRequest(res, 'appId is required');
 
-    const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
+    const app = await findAuthorizedApp(req.user, appId);
     if (!app) return notFound(res, 'Application not found');
 
     const result = await Log.deleteMany({ appId: app._id });

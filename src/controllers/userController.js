@@ -3,6 +3,7 @@ const Application = require('../models/Application');
 const License = require('../models/License');
 const Log = require('../models/Log');
 const { notifyUserBanned } = require('../utils/discordWebhook');
+const { findAuthorizedApp } = require('../utils/appAuthorization');
 const {
   success,
   created,
@@ -25,7 +26,7 @@ const createUser = async (req, res) => {
       return badRequest(res, 'appId, username, and password are required');
     }
 
-    const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
+    const app = await findAuthorizedApp(req.user, appId);
     if (!app) return notFound(res, 'Application not found');
 
     // Limite para usuarios normales
@@ -72,7 +73,7 @@ const getUsers = async (req, res) => {
 
     if (!appId) return badRequest(res, 'appId query parameter is required');
 
-    const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
+    const app = await findAuthorizedApp(req.user, appId);
     if (!app) return notFound(res, 'Application not found');
 
     const filter = { appId: app._id };
@@ -115,7 +116,7 @@ const deleteUser = async (req, res) => {
 
     if (!appId) return badRequest(res, 'appId query parameter is required');
 
-    const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
+    const app = await findAuthorizedApp(req.user, appId);
     if (!app) return notFound(res, 'Application not found');
 
     const user = await AppUser.findOne({ _id: id, appId: app._id });
@@ -154,7 +155,7 @@ const banUser = async (req, res) => {
 
     if (!appId) return badRequest(res, 'appId is required');
 
-    const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
+    const app = await findAuthorizedApp(req.user, appId);
     if (!app) return notFound(res, 'Application not found');
 
     const user = await AppUser.findOne({ _id: id, appId: app._id });
@@ -194,7 +195,7 @@ const unbanUser = async (req, res) => {
 
     if (!appId) return badRequest(res, 'appId is required');
 
-    const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
+    const app = await findAuthorizedApp(req.user, appId);
     if (!app) return notFound(res, 'Application not found');
 
     const user = await AppUser.findOne({ _id: id, appId: app._id });
@@ -230,7 +231,7 @@ const resetHWID = async (req, res) => {
 
     if (!appId) return badRequest(res, 'appId is required');
 
-    const app = await Application.findOne({ _id: appId, ownerId: req.user._id });
+    const app = await findAuthorizedApp(req.user, appId);
     if (!app) return notFound(res, 'Application not found');
 
     const user = await AppUser.findOne({ _id: id, appId: app._id });

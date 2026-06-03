@@ -7,6 +7,13 @@ const licenseSchema = new mongoose.Schema(
       required: [true, 'License key is required'],
       unique: true,
       trim: true,
+    },
+    // Normalized uppercase key for case-insensitive lookups and uniqueness
+    keyNormalized: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
       uppercase: true,
     },
     appId: {
@@ -25,7 +32,7 @@ const licenseSchema = new mongoose.Schema(
     },
     durationUnit: {
       type: String,
-      enum: ['hours', 'days', 'months', 'lifetime', null],
+      enum: ['hours', 'days', 'months', 'years', 'lifetime', null],
       default: null,
     },
     status: {
@@ -63,6 +70,13 @@ const licenseSchema = new mongoose.Schema(
 
 licenseSchema.index({ appId: 1, status: 1 });
 licenseSchema.index({ key: 1 });
+licenseSchema.index({ keyNormalized: 1 });
+
+// Ensure normalized key is set before validation/save
+licenseSchema.pre('validate', function (next) {
+  if (this.key) this.keyNormalized = String(this.key).toUpperCase();
+  next();
+});
 
 /**
  * Check if the license is currently valid (active and not expired)
@@ -78,7 +92,7 @@ licenseSchema.methods.isValid = function () {
 /**
  * Calculate expiry date based on duration and unit
  * @param {number} duration
- * @param {string} unit - hours|days|months|lifetime
+ * @param {string} unit - hours|days|months|years|lifetime
  * @returns {Date|null}
  */
 licenseSchema.statics.calculateExpiry = function (duration, unit) {
@@ -92,6 +106,11 @@ licenseSchema.statics.calculateExpiry = function (duration, unit) {
     case 'months': {
       const d = new Date(now);
       d.setMonth(d.getMonth() + duration);
+      return d;
+    }
+    case 'years': {
+      const d = new Date(now);
+      d.setFullYear(d.getFullYear() + duration);
       return d;
     }
     default:
