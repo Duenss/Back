@@ -17,14 +17,6 @@ const broadcastSchema = new mongoose.Schema(
       ref: 'User',
       required: true,
     },
-    expiresAt: {
-      type: Date,
-      default: () => new Date(Date.now() + 24 * 60 * 60 * 1000), // 24h por defecto
-    },
-    active: {
-      type: Boolean,
-      default: true,
-    },
   },
   { timestamps: true }
 );

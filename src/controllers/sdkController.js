@@ -1,5 +1,30 @@
 const Application = require('../models/Application');
+const Broadcast = require('../models/Broadcast');
 const { notFound, serverError } = require('../utils/apiResponse');
+
+/**
+ * GET /api/sdk/broadcast
+ * Returns the latest active broadcast for the SDK (no JWT required).
+ * Authenticated via x-app-id + x-app-secret (validateApp middleware).
+ *
+ * Response: { success: true, data: { _id, message, type } }
+ *           { success: true, data: null }  — when no active broadcast
+ */
+const getSDKBroadcast = async (req, res) => {
+  try {
+    const broadcast = await Broadcast.findOne()
+      .sort({ createdAt: -1 })
+      .select('_id message type');
+
+    return res.status(200).json({
+      success: true,
+      data: broadcast || null,
+    });
+  } catch (err) {
+    console.error('getSDKBroadcast error:', err);
+    return serverError(res, 'Failed to retrieve broadcast');
+  }
+};
 
 /**
  * GET /api/sdk/generate/:appId
@@ -541,4 +566,4 @@ std::string Auth::UrlEncode(const std::string& s) {
 `;
 };
 
-module.exports = { generateSDK };
+module.exports = { generateSDK, getSDKBroadcast };

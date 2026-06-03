@@ -20,21 +20,16 @@ const {
  */
 const createBroadcast = async (req, res) => {
   try {
-    const { message, type, expiresInHours } = req.body;
+    const { message, type } = req.body;
 
     if (!message || !message.trim()) {
       return badRequest(res, 'message is required');
     }
 
-    const expiresAt = expiresInHours
-      ? new Date(Date.now() + expiresInHours * 60 * 60 * 1000)
-      : new Date(Date.now() + 24 * 60 * 60 * 1000);
-
     const broadcast = await Broadcast.create({
       message: message.trim(),
       type: type || 'info',
       sentBy: req.user._id,
-      expiresAt,
     });
 
     return created(res, broadcast, 'Broadcast sent successfully');
@@ -50,10 +45,7 @@ const createBroadcast = async (req, res) => {
  */
 const getActiveBroadcasts = async (req, res) => {
   try {
-    const broadcasts = await Broadcast.find({
-      active: true,
-      expiresAt: { $gt: new Date() },
-    })
+    const broadcasts = await Broadcast.find()
       .sort({ createdAt: -1 })
       .limit(10);
 
