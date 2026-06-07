@@ -43,8 +43,12 @@ const generateLicenses = async (req, res) => {
     const app = await findAuthorizedApp(req.user, appId);
     if (!app) return notFound(res, 'Application not found');
 
-    // Limite para usuarios normales
-    if (req.user.role === 'user' || req.user.role === 'manager') {
+    // Limite para usuarios normales y managers cuyos owners no tienen plan premium
+    // Los managers heredan el plan de su owner (superadmin/admin = ilimitado)
+    const ownerRole = req.user.isManager ? (req.user.ownerRole || 'user') : req.user.role;
+    const isUnlimited = ownerRole === 'superadmin' || ownerRole === 'admin';
+
+    if (!isUnlimited) {
       if (count > 10) return forbidden(res, 'Free plan limit: maximum 10 licenses per generation');
       const total = await License.countDocuments({ appId: app._id });
       if (total + count > 10) return forbidden(res, `Free plan limit: maximum 10 total licenses per application (currently ${total})`);
