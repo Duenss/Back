@@ -326,10 +326,14 @@ const deleteExpiredLicenses = async (req, res) => {
  * POST /api/licenses/login
  * Authenticate an app user using a license key (SDK endpoint)
  * Requires x-app-id and x-app-secret headers (handled by validateApp middleware)
+ *
+ * Body opcional: requiredSubscription (string) — si se envía, la licencia DEBE
+ * tener asignada esa suscripción (comparación case-insensitive). Si no coincide
+ * se devuelve 403 "Invalid key".
  */
 const loginWithLicense = async (req, res) => {
   try {
-    const { licenseKey, hwid, username, password } = req.body;
+    const { licenseKey, hwid, username, password, requiredSubscription } = req.body;
     const app = req.application; // set by validateApp middleware
     const clientIp = req.ip;
 
@@ -387,6 +391,17 @@ const loginWithLicense = async (req, res) => {
       await Event.create({ appId: app._id, type: 'login_failed', description: `Invalid license key attempt`, ip: clientIp, isTemporary: true, expiresAt: new Date(Date.now() + 300 * 1000) });
       if (app.webhookUrl) notifyLoginFailed(app.webhookUrl, { username: licenseKey, ip: clientIp, reason: 'Invalid license key', appName: app.name });
       return notFound(res, 'License key not found');
+    }
+
+    // ── Validacion de suscripcion requerida ───────────────────
+    if (requiredSubscription) {
+      const licenseSub = license.subscription ? license.subscription.name : null;
+      if (!licenseSub || licenseSub.toLowerCase() !== requiredSubscription.toLowerCase()) {
+        await Log.create({ appId: app._id, event: 'login_failed', description: `Subscription mismatch for license ${licenseKey}: required "${requiredSubscription}", got "${licenseSub || 'none'}"`, ip: clientIp });
+        await Event.create({ appId: app._id, type: 'login_failed', description: `Subscription mismatch for license ${licenseKey}`, ip: clientIp, isTemporary: true, expiresAt: new Date(Date.now() + 300 * 1000) });
+        if (app.webhookUrl) notifyLoginFailed(app.webhookUrl, { username: licenseKey, ip: clientIp, reason: 'Subscription mismatch', appName: app.name });
+        return forbidden(res, 'Invalid key');
+      }
     }
 
     if (license.status === 'banned') {
@@ -574,10 +589,14 @@ const activateLicense = async (req, res) => {
  * SDK endpoint: autenticar con solo licencia + HWID.
  * Si la licencia esta unused la activa automaticamente (sin username/password).
  * Si ya esta activa hace login directo.
+ *
+ * Body opcional: requiredSubscription (string) — si se envía, la licencia DEBE
+ * tener asignada esa suscripción (comparación case-insensitive). Si no coincide
+ * se devuelve 403 "Invalid key".
  */
 const authWithKey = async (req, res) => {
   try {
-    const { licenseKey, hwid } = req.body;
+    const { licenseKey, hwid, requiredSubscription } = req.body;
     const app = req.application;
     const clientIp = req.ip;
 
@@ -596,6 +615,16 @@ const authWithKey = async (req, res) => {
     if (license.status === 'banned') {
       await Log.create({ appId: app._id, event: 'login_failed', description: `Banned license: ${licenseKey}`, ip: clientIp });
       return forbidden(res, 'This license key has been banned');
+    }
+
+    // ── Validacion de suscripcion requerida ───────────────────
+    if (requiredSubscription) {
+      const licenseSub = license.subscription ? license.subscription.name : null;
+      if (!licenseSub || licenseSub.toLowerCase() !== requiredSubscription.toLowerCase()) {
+        await Log.create({ appId: app._id, event: 'login_failed', description: `Subscription mismatch for license ${licenseKey}: required "${requiredSubscription}", got "${licenseSub || 'none'}"`, ip: clientIp });
+        await Event.create({ appId: app._id, type: 'login_failed', description: `Subscription mismatch for license ${licenseKey}`, ip: clientIp, isTemporary: true, expiresAt: new Date(Date.now() + 300 * 1000) });
+        return forbidden(res, 'Invalid key');
+      }
     }
 
     if (license.status === 'expired') {

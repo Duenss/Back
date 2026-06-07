@@ -44,7 +44,7 @@ const generateSDK = async (req, res) => {
 
     if (!app) return notFound(res, 'Application not found');
 
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://back-bots.up.railway.app/api';
     // Extract host from URL for WinHTTP
     const urlObj = (() => { try { return new URL(apiUrl); } catch { return { hostname: 'localhost', port: '5000', protocol: 'http:' }; } })();
     const apiHost = urlObj.hostname;
@@ -62,7 +62,9 @@ const generateSDK = async (req, res) => {
         appName: app.name,
         appId: app.appId,
         files: {
+          'skCrypt.hpp': skCryptHeader,
           'skCrypt.h': skCryptHeader,
+          'Auth.hpp': authHeader,
           'Auth.h': authHeader,
           'Auth.cpp': authCpp,
         },
@@ -75,7 +77,7 @@ const generateSDK = async (req, res) => {
 };
 
 /**
- * Generate skCrypt.h — compile-time string obfuscation (like Vahalla)
+ * Generate skCrypt.hpp — compile-time string obfuscation (like Vahalla)
  */
 const generateSkCryptHeader = () => {
   return `#pragma once
@@ -135,7 +137,7 @@ namespace detail {
 };
 
 /**
- * Generate Auth.h
+ * Generate Auth.hpp
  */
 const generateAuthHeader = (app, apiHost, apiPort, useHttps) => {
   return `#pragma once
@@ -148,8 +150,8 @@ const generateAuthHeader = (app, apiHost, apiPort, useHttps) => {
 //  Add Auth.cpp to .gitignore
 // ============================================================
 
-#ifndef AUTHPLATFORM_AUTH_H
-#define AUTHPLATFORM_AUTH_H
+#ifndef AUTHPLATFORM_AUTH_HPP
+#define AUTHPLATFORM_AUTH_HPP
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -183,10 +185,11 @@ public:
     ~Auth();
 
     // Authenticate with an active license key
-    bool LoginWithLicense(const std::string& licenseKey, const std::string& hwid = "");
+    // subscriptionRequired: if non-empty, the server will verify the license has this subscription
+    bool LoginWithLicense(const std::string& licenseKey, const std::string& hwid = "", const std::string& subscriptionRequired = "");
 
     // Authenticate with username and password
-    bool Login(const std::string& username, const std::string& password);
+    bool Login(const std::string& username, const std::string& password, const std::string& hwid = "");
 
     // Activate an unused license key and create account
     bool ActivateLicense(const std::string& licenseKey,
@@ -272,8 +275,8 @@ const generateAuthCpp = (app, apiHost, apiPort, useHttps) => {
 //    - skCrypt.h (included in this SDK)
 // ============================================================
 
-#include "Auth.h"
-#include "skCrypt.h"
+#include "Auth.hpp"
+#include "skCrypt.hpp"
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <iomanip>
@@ -336,7 +339,7 @@ bool Auth::Login(const std::string& username, const std::string& password) {
     return false;
 }
 
-bool Auth::LoginWithLicense(const std::string& licenseKey, const std::string& hwid) {
+bool Auth::LoginWithLicense(const std::string& licenseKey, const std::string& hwid, const std::string& subscriptionRequired) {
     m_authenticated = false;
     m_banned = false;
     const std::string& h = hwid.empty() ? m_hwid : hwid;
@@ -344,6 +347,8 @@ bool Auth::LoginWithLicense(const std::string& licenseKey, const std::string& hw
     json body;
     body["licenseKey"] = licenseKey;
     body["hwid"]       = h;
+    if (!subscriptionRequired.empty())
+        body["requiredSubscription"] = subscriptionRequired;
 
     auto response = HttpPost(m_apiBase + L"/licenses/login", body.dump());
     if (response.empty()) return false;
