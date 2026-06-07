@@ -6,20 +6,20 @@ const {
   updateSubscription,
   deleteSubscription,
 } = require('../controllers/subscriptionController');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requirePermission } = require('../middleware/auth');
 
 router.use(authenticate);
 
 // GET /api/subscriptions
-router.get('/', getSubscriptions);
+router.get('/', requirePermission('createLicenses'), getSubscriptions);
 
 // POST /api/subscriptions
-router.post('/', createSubscription);
+router.post('/', requirePermission('createLicenses'), createSubscription);
 
 // PUT /api/subscriptions/:id
-router.put('/:id', updateSubscription);
+router.put('/:id', requirePermission('createLicenses'), updateSubscription);
 
 // DELETE /api/subscriptions/:id
-router.delete('/:id', deleteSubscription);
+router.delete('/:id', requirePermission('createLicenses'), deleteSubscription);
 
 module.exports = router;

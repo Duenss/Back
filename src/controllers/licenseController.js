@@ -3,10 +3,11 @@ const Application = require('../models/Application');
 const AppUser = require('../models/AppUser');
 const Subscription = require('../models/Subscription');
 const Log = require('../models/Log');
+const Event = require('../models/Event');
 const { findAuthorizedApp } = require('../utils/appAuthorization');
 const { generateLicenseKeys } = require('../utils/licenseGenerator');
 const { processHWID } = require('../utils/hwidGenerator');
-const { notifyLicenseActivated, notifyLicenseGenerated, notifyHWIDError } = require('../utils/discordWebhook');
+const { notifyLicenseActivated, notifyLicenseGenerated, notifyHWIDError, notifyLogin, notifyLoginFailed } = require('../utils/discordWebhook');
 const {
   success,
   created,
@@ -56,6 +57,10 @@ const generateLicenses = async (req, res) => {
     if (subscriptionId) {
       subscription = await Subscription.findOne({ _id: subscriptionId, appId: app._id });
       if (!subscription) return notFound(res, 'Subscription not found');
+      if (req.user.isManager && Array.isArray(req.user.allowedSubscriptions) && req.user.allowedSubscriptions.length > 0) {
+        const allowed = req.user.allowedSubscriptions.some((id) => id.toString() === subscription._id.toString());
+        if (!allowed) return forbidden(res, 'Subscription not allowed for this manager');
+      }
       resolvedDuration = subscription.duration;
       resolvedUnit = subscription.durationUnit;
     }
@@ -328,7 +333,49 @@ const loginWithLicense = async (req, res) => {
     const app = req.application; // set by validateApp middleware
     const clientIp = req.ip;
 
-    if (!licenseKey) return badRequest(res, 'licenseKey is required');
+    if (!licenseKey && (!username || !password)) {
+      return badRequest(res, 'licenseKey or username/password are required');
+    }
+
+    if (username && password) {
+      const appUser = await AppUser.findOne({ username, appId: app._id }).select('+password').populate('subscription');
+      if (!appUser || !(await appUser.comparePassword(password))) {
+        await Log.create({ appId: app._id, event: 'login_failed', description: `Invalid app user login attempt for ${username}`, ip: clientIp });
+        await Event.create({ appId: app._id, type: 'login_failed', description: `Invalid app user login attempt for ${username}`, ip: clientIp, isTemporary: true, expiresAt: new Date(Date.now() + 300 * 1000) });
+        if (app.webhookUrl) notifyLoginFailed(app.webhookUrl, { username, ip: clientIp, reason: 'Invalid credentials', appName: app.name });
+        return unauthorized(res, 'Invalid credentials');
+      }
+
+      if (appUser.status === 'banned') {
+        return forbidden(res, `User is banned: ${appUser.banReason || 'Contact support'}`);
+      }
+
+      appUser.lastLogin = new Date();
+      appUser.ip = clientIp;
+      await appUser.save();
+
+      const license = appUser.licenseKey
+        ? await License.findOne({ keyNormalized: appUser.licenseKey.toUpperCase(), appId: app._id }).populate('subscription')
+        : null;
+
+      await Log.create({ appId: app._id, userId: appUser._id, event: 'login_success', description: `App user login: ${username}`, ip: clientIp });
+      await Event.create({ appId: app._id, userId: appUser._id, type: 'login_success', description: `App user login: ${username}`, ip: clientIp, isTemporary: true, expiresAt: new Date(Date.now() + 300 * 1000) });
+      if (app.webhookUrl) notifyLogin(app.webhookUrl, { username, ip: clientIp, appName: app.name });
+
+      return success(res, {
+        valid: true,
+        license: license
+          ? {
+              key: license.key,
+              status: license.status,
+              expiresAt: license.expiresAt,
+              durationUnit: license.durationUnit,
+              subscription: license.subscription,
+            }
+          : null,
+        user: appUser,
+      }, 'Authentication successful');
+    }
 
     const license = await License.findOne({
       keyNormalized: licenseKey.toUpperCase(),
@@ -337,6 +384,8 @@ const loginWithLicense = async (req, res) => {
 
     if (!license) {
       await Log.create({ appId: app._id, event: 'login_failed', description: `Invalid license key attempt`, ip: clientIp });
+      await Event.create({ appId: app._id, type: 'login_failed', description: `Invalid license key attempt`, ip: clientIp, isTemporary: true, expiresAt: new Date(Date.now() + 300 * 1000) });
+      if (app.webhookUrl) notifyLoginFailed(app.webhookUrl, { username: licenseKey, ip: clientIp, reason: 'Invalid license key', appName: app.name });
       return notFound(res, 'License key not found');
     }
 
@@ -361,6 +410,7 @@ const loginWithLicense = async (req, res) => {
       const hashedHwid = processHWID(hwid);
       if (license.hwid && license.hwid !== hashedHwid) {
         await Log.create({ appId: app._id, event: 'hwid_error', description: `HWID mismatch for license ${licenseKey}`, ip: clientIp });
+        await Event.create({ appId: app._id, type: 'hwid_error', description: `HWID mismatch for license ${licenseKey}`, ip: clientIp, isTemporary: true, expiresAt: new Date(Date.now() + 300 * 1000) });
         if (app.webhookUrl) notifyHWIDError(app.webhookUrl, { username: licenseKey, ip: clientIp, appName: app.name });
         return forbidden(res, 'HWID mismatch');
       }
@@ -383,6 +433,7 @@ const loginWithLicense = async (req, res) => {
       description: `License login: ${licenseKey}`,
       ip: clientIp,
     });
+    await Event.create({ appId: app._id, userId: appUser ? appUser._id : null, type: 'login_success', description: `License login: ${licenseKey}`, ip: clientIp, isTemporary: true, expiresAt: new Date(Date.now() + 300 * 1000) });
 
     if (app.webhookUrl) {
       notifyLogin(app.webhookUrl, { username: licenseKey, ip: clientIp, appName: app.name });
@@ -501,6 +552,7 @@ const activateLicense = async (req, res) => {
       description: `License ${licenseKey} activated by ${username}`,
       ip: clientIp,
     });
+    await Event.create({ appId: app._id, userId: appUser._id, type: 'license_activated', description: `License ${licenseKey} activated by ${username}`, ip: clientIp, isTemporary: true, expiresAt: new Date(Date.now() + 300 * 1000) });
 
     if (app.webhookUrl) {
       notifyLicenseActivated(app.webhookUrl, { licenseKey, username, ip: clientIp, appName: app.name });
@@ -592,6 +644,7 @@ const authWithKey = async (req, res) => {
           description: `Auto-activated license ${licenseKey}`,
           ip: clientIp,
         });
+        await Event.create({ appId: app._id, userId: appUser._id, type: 'license_activated', description: `Auto-activated license ${licenseKey}`, ip: clientIp, isTemporary: true, expiresAt: new Date(Date.now() + 300 * 1000) });
 
         if (app.webhookUrl) {
           notifyLicenseActivated(app.webhookUrl, { licenseKey, username: autoUsername, ip: clientIp, appName: app.name });
@@ -610,6 +663,7 @@ const authWithKey = async (req, res) => {
     // HWID check
     if (app.hwidLock && hashedHwid && license.hwid && license.hwid !== hashedHwid) {
       await Log.create({ appId: app._id, event: 'hwid_error', description: `HWID mismatch: ${licenseKey}`, ip: clientIp });
+      await Event.create({ appId: app._id, type: 'hwid_error', description: `HWID mismatch: ${licenseKey}`, ip: clientIp, isTemporary: true, expiresAt: new Date(Date.now() + 300 * 1000) });
       if (app.webhookUrl) notifyHWIDError(app.webhookUrl, { username: licenseKey, ip: clientIp, appName: app.name });
       return forbidden(res, 'HWID mismatch');
     }
@@ -631,6 +685,7 @@ const authWithKey = async (req, res) => {
       description: `Key login: ${licenseKey}`,
       ip: clientIp,
     });
+    await Event.create({ appId: app._id, userId: appUser ? appUser._id : null, type: 'login_success', description: `Key login: ${licenseKey}`, ip: clientIp, isTemporary: true, expiresAt: new Date(Date.now() + 300 * 1000) });
 
     return success(res, {
       valid: true,

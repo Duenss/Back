@@ -20,6 +20,9 @@ const authenticate = async (req, res, next) => {
 
     let decoded;
     try {
+      // Determine effective subscription level (owner for managers)
+      const effectiveSubscriptionLevel = (req.user && (req.user.inheritedSubscriptionLevel || req.user.subscriptionLevel)) || 0;
+      const isPaid = Number(effectiveSubscriptionLevel) > 0;
       decoded = jwt.verify(token, process.env.JWT_SECRET);
     } catch (err) {
       if (err.name === 'TokenExpiredError') {
@@ -68,7 +71,7 @@ const requireAdminOrManager = (req, res, next) => {
   if (!req.user) {
     return unauthorized(res, 'Authentication required');
   }
-  if (req.user.role !== 'admin' && req.user.role !== 'manager' && !req.user.isManager) {
+  if (req.user.role !== 'admin' && req.user.role !== 'superadmin' && req.user.role !== 'manager' && !req.user.isManager) {
     return forbidden(res, 'Insufficient permissions');
   }
   next();
@@ -83,8 +86,8 @@ const requirePermission = (permission) => {
     if (!req.user) {
       return unauthorized(res, 'Authentication required');
     }
-    // Admins bypass permission checks
-    if (req.user.role === 'admin') {
+    // Admins and superadmins bypass permission checks
+    if (req.user.role === 'admin' || req.user.role === 'superadmin') {
       return next();
     }
     // Check manager permission
@@ -127,16 +130,20 @@ const checkPlanLimits = (type) => {
 
     try {
       if (type === 'apps') {
+        // Managers cannot create applications
+        if (req.user.isManager) {
+          return forbidden(res, 'Managers cannot create applications');
+        }
         const Application = require('../models/Application');
         const count = await Application.countDocuments({ ownerId: req.user._id });
-        if (count >= PLAN_LIMITS.maxApps) {
+        if (!isPaid && count >= PLAN_LIMITS.maxApps) {
           return forbidden(res, `Free plan limit: maximum ${PLAN_LIMITS.maxApps} applications allowed`);
         }
       }
 
       if (type === 'licenses') {
         const count = parseInt(req.body.count) || 1;
-        if (count > PLAN_LIMITS.maxLicensesPerGeneration) {
+        if (!isPaid && count > PLAN_LIMITS.maxLicensesPerGeneration) {
           return forbidden(res, `Free plan limit: maximum ${PLAN_LIMITS.maxLicensesPerGeneration} licenses per generation`);
         }
         // Verificar total de licencias en la app
@@ -144,9 +151,11 @@ const checkPlanLimits = (type) => {
         const { findAuthorizedApp } = require('../utils/appAuthorization');
         const app = await findAuthorizedApp(req.user, req.body.appId);
         if (app) {
-          const total = await License.countDocuments({ appId: app._id });
-          if (total + count > PLAN_LIMITS.maxLicensesPerGeneration) {
-            return forbidden(res, `Free plan limit: maximum ${PLAN_LIMITS.maxLicensesPerGeneration} total licenses per application`);
+          if (!isPaid) {
+            const total = await License.countDocuments({ appId: app._id });
+            if (total + count > PLAN_LIMITS.maxLicensesPerGeneration) {
+              return forbidden(res, `Free plan limit: maximum ${PLAN_LIMITS.maxLicensesPerGeneration} total licenses per application`);
+            }
           }
         }
       }
@@ -158,9 +167,11 @@ const checkPlanLimits = (type) => {
         if (appId) {
           const app = await findAuthorizedApp(req.user, appId);
           if (app) {
-            const count = await AppUser.countDocuments({ appId: app._id });
-            if (count >= PLAN_LIMITS.maxUsersPerApp) {
-              return forbidden(res, `Free plan limit: maximum ${PLAN_LIMITS.maxUsersPerApp} users per application`);
+            if (!isPaid) {
+              const count = await AppUser.countDocuments({ appId: app._id });
+              if (count >= PLAN_LIMITS.maxUsersPerApp) {
+                return forbidden(res, `Free plan limit: maximum ${PLAN_LIMITS.maxUsersPerApp} users per application`);
+              }
             }
           }
         }
@@ -174,6 +185,69 @@ const checkPlanLimits = (type) => {
   };
 };
 
+/**
+ * Validate that managers can only access their assigned apps
+ * For endpoints with appId in body/params, ensure manager has access
+ */
+const validateManagerAppAccess = async (req, res, next) => {
+  if (!req.user || !req.user.isManager) {
+    return next(); // Not a manager, skip validation
+  }
+
+  // Get appId from various sources
+  const appId = req.body?.appId || req.query?.appId || req.params?.appId || req.params?.id;
+  
+  if (!appId) {
+    return next(); // No app specified, allow
+  }
+
+  // Check if manager has access to this app
+  const Application = require('../models/Application');
+  const app = await Application.findById(appId);
+  
+  if (!app) {
+    return forbidden(res, 'Application not found');
+  }
+
+  // Verify this manager is assigned to this app
+  const hasAccess = req.user.appIds && req.user.appIds.some(id => id.toString() === appId.toString());
+  
+  if (!hasAccess) {
+    return forbidden(res, 'Access denied: This application is not assigned to your account');
+  }
+
+  next();
+};
+
+/**
+ * Ensure managers inherit their owner's subscription tier for plan limits
+ * and validate subscription status before allowing operations
+ */
+const managerOwnerSubscriptionInheritance = async (req, res, next) => {
+  if (!req.user || !req.user.isManager) {
+    return next(); // Not a manager, skip
+  }
+
+  try {
+    // Get owner's subscription status
+    const User = require('../models/User');
+    const owner = await User.findById(req.user.ownerId).select('subscriptionTier subscriptionLevel');
+    
+    if (!owner) {
+      return forbidden(res, 'Owner account not found');
+    }
+
+    // Attach owner's subscription to manager context
+    req.user.inheritedSubscriptionTier = owner.subscriptionTier || 'free';
+    req.user.inheritedSubscriptionLevel = owner.subscriptionLevel || 0;
+    
+    next();
+  } catch (err) {
+    console.error('managerOwnerSubscriptionInheritance error:', err);
+    return serverError(res, 'Subscription validation error');
+  }
+};
+
 module.exports = {
   authenticate,
   requireAdmin,
@@ -182,4 +256,6 @@ module.exports = {
   requirePermission,
   checkPlanLimits,
   PLAN_LIMITS,
+  validateManagerAppAccess,
+  managerOwnerSubscriptionInheritance,
 };

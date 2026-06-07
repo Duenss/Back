@@ -4,6 +4,7 @@ const User = require('../models/User');
 const Manager = require('../models/Manager');
 const Application = require('../models/Application');
 const Log = require('../models/Log');
+const Event = require('../models/Event');
 const { notifyLogin, notifyLoginFailed } = require('../utils/discordWebhook');
 const { success, created, badRequest, unauthorized, conflict, serverError } = require('../utils/apiResponse');
 
@@ -106,6 +107,16 @@ const login = async (req, res) => {
             description: `Panel login failed for ${id}`,
             ip: clientIp,
           });
+          // create temporary event for live-panel
+          await Event.create({
+            userId: null,
+            appId: app._id,
+            type: 'login_failed',
+            description: `Panel login failed for ${id}`,
+            ip: clientIp,
+            isTemporary: true,
+            expiresAt: new Date(Date.now() + 300 * 1000),
+          });
           if (app.webhookUrl) {
             await notifyLoginFailed(app.webhookUrl, {
               username: id,
@@ -159,6 +170,16 @@ const login = async (req, res) => {
           description: `Panel login: ${user.username}`,
           ip: clientIp,
         });
+        // create temporary event for live-panel
+        await Event.create({
+          userId: user._id,
+          appId: app._id,
+          type: 'login_success',
+          description: `Panel login: ${user.username}`,
+          ip: clientIp,
+          isTemporary: true,
+          expiresAt: new Date(Date.now() + 300 * 1000),
+        });
         if (app.webhookUrl) {
           await notifyLogin(app.webhookUrl, {
             username: user.username,
@@ -169,7 +190,11 @@ const login = async (req, res) => {
       })
     );
 
-    return success(res, { token, user }, 'Login successful');
+    const userResponse = user.toJSON ? user.toJSON() : user;
+    userResponse.role = user.role || (user.isManager ? 'manager' : userResponse.role);
+    userResponse.isManager = Boolean(user.isManager);
+
+    return success(res, { token, user: userResponse }, 'Login successful');
   } catch (err) {
     console.error('Login error:', err);
     return serverError(res, 'Login failed');
@@ -257,9 +282,14 @@ const forgotPassword = async (req, res) => {
  */
 const getMe = async (req, res) => {
   try {
-    // Return user with permissions included
+    // Return user with permissions included and ensure manager role flags are present
     const userData = req.user.toJSON ? req.user.toJSON() : req.user;
-    return success(res, userData, 'User retrieved');
+    const responseData = {
+      ...userData,
+      role: userData.role || (req.user.isManager ? 'manager' : userData.role),
+      isManager: Boolean(req.user.isManager),
+    };
+    return success(res, responseData, 'User retrieved');
   } catch (err) {
     return serverError(res, 'Failed to retrieve user');
   }

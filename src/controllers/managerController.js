@@ -1,5 +1,6 @@
 const Manager = require('../models/Manager');
 const Application = require('../models/Application');
+const Subscription = require('../models/Subscription');
 const {
   success,
   created,
@@ -26,6 +27,21 @@ const createManager = async (req, res) => {
       const apps = await Application.find({ _id: { $in: appIds }, ownerId: req.user._id });
       if (apps.length !== appIds.length) {
         return badRequest(res, 'One or more application IDs are invalid');
+      }
+    }
+
+    if (allowedSubscriptions.length > 0) {
+      const subscriptions = await Subscription.find({ _id: { $in: allowedSubscriptions } }).select('appId');
+      if (subscriptions.length !== allowedSubscriptions.length) {
+        return badRequest(res, 'One or more allowed subscriptions are invalid');
+      }
+      const ownerAppIds = appIds.map((id) => id.toString());
+      if (ownerAppIds.length === 0) {
+        return badRequest(res, 'App IDs are required when assigning allowed subscriptions');
+      }
+      const invalid = subscriptions.some((sub) => !ownerAppIds.includes(sub.appId.toString()));
+      if (invalid) {
+        return badRequest(res, 'Allowed subscriptions must belong to assigned applications');
       }
     }
 
@@ -108,7 +124,21 @@ const updateManager = async (req, res) => {
     }
 
     if (description !== undefined) manager.description = description;
-    if (allowedSubscriptions !== undefined) manager.allowedSubscriptions = Array.isArray(allowedSubscriptions) ? allowedSubscriptions : manager.allowedSubscriptions;
+    if (allowedSubscriptions !== undefined) {
+      const subscriptions = await Subscription.find({ _id: { $in: allowedSubscriptions } }).select('appId');
+      if (subscriptions.length !== allowedSubscriptions.length) {
+        return badRequest(res, 'One or more allowed subscriptions are invalid');
+      }
+      const selectedAppIds = (appIds !== undefined ? appIds : manager.appIds || []).map((id) => id.toString());
+      if (selectedAppIds.length === 0) {
+        return badRequest(res, 'App IDs are required when assigning allowed subscriptions');
+      }
+      const invalid = subscriptions.some((sub) => !selectedAppIds.includes(sub.appId.toString()));
+      if (invalid) {
+        return badRequest(res, 'Allowed subscriptions must belong to assigned applications');
+      }
+      manager.allowedSubscriptions = Array.isArray(allowedSubscriptions) ? allowedSubscriptions : manager.allowedSubscriptions;
+    }
 
     if (isActive !== undefined) manager.isActive = isActive;
     if (password) manager.password = password; // will be hashed by pre-save hook

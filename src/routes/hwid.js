@@ -1,9 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const { checkHWID, resetHWID, banHWID, unbanHWID } = require('../controllers/hwidController');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, managerOwnerSubscriptionInheritance } = require('../middleware/auth');
 
 router.use(authenticate);
+router.use(managerOwnerSubscriptionInheritance);
 
 // POST /api/hwid/check
 router.post('/check', checkHWID);

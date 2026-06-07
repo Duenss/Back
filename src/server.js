@@ -18,6 +18,8 @@ const managerRoutes = require('./routes/managers');
 const hwidRoutes = require('./routes/hwid');
 const sdkRoutes = require('./routes/sdk');
 const adminRoutes = require('./routes/admin');
+const eventsRoutes = require('./routes/events');
+const rpcRoutes = require('./routes/rpc');
 
 const app = express();
 const corsOrigins = (process.env.CORS_ORIGIN || '*')
@@ -78,6 +80,8 @@ app.use('/api/managers', managerRoutes);
 app.use('/api/hwid', hwidRoutes);
 app.use('/api/sdk', sdkRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/events', eventsRoutes);
+app.use('/rpc', rpcRoutes);
 
 // ── 404 handler ───────────────────────────────────────────────
 app.use((req, res) => {

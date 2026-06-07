@@ -16,7 +16,7 @@ const {
   activateLicense,
   authWithKey,
 } = require('../controllers/licenseController');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requirePermission, validateManagerAppAccess, managerOwnerSubscriptionInheritance } = require('../middleware/auth');
 const validateApp = require('../middleware/validateApp');
 const { sdkLimiter } = require('../middleware/rateLimiter');
 
@@ -28,20 +28,21 @@ router.post('/auth', sdkLimiter, validateApp, authWithKey);  // login-only-with-
 
 // Dashboard routes (require JWT)
 router.use(authenticate);
+router.use(managerOwnerSubscriptionInheritance); // Inherit owner subscription for plan limits
 
-router.get('/', getLicenses);
-router.post('/generate', generateLicenses);
-router.post('/:key/reset-hwid', resetLicenseHwid);
-router.post('/:key/pause', pauseLicense);
-router.post('/:key/ban', banLicense);
+router.get('/', requirePermission('createLicenses'), getLicenses);
+router.post('/generate', requirePermission('createLicenses'), validateManagerAppAccess, generateLicenses);
+router.post('/:key/reset-hwid', requirePermission('createLicenses'), validateManagerAppAccess, resetLicenseHwid);
+router.post('/:key/pause', requirePermission('createLicenses'), validateManagerAppAccess, pauseLicense);
+router.post('/:key/ban', requirePermission('createLicenses'), validateManagerAppAccess, banLicense);
 
 // Bulk delete routes
-router.delete('/bulk/all', deleteAllLicenses);
-router.delete('/bulk/used', deleteUsedLicenses);
-router.delete('/bulk/unused', deleteUnusedLicenses);
-router.delete('/bulk/expired', deleteExpiredLicenses);
+router.delete('/bulk/all', requirePermission('createLicenses'), validateManagerAppAccess, deleteAllLicenses);
+router.delete('/bulk/used', requirePermission('createLicenses'), validateManagerAppAccess, deleteUsedLicenses);
+router.delete('/bulk/unused', requirePermission('createLicenses'), validateManagerAppAccess, deleteUnusedLicenses);
+router.delete('/bulk/expired', requirePermission('createLicenses'), validateManagerAppAccess, deleteExpiredLicenses);
 
 // Single license delete
-router.delete('/:key', deleteLicense);
+router.delete('/:key', requirePermission('createLicenses'), validateManagerAppAccess, deleteLicense);
 
 module.exports = router;

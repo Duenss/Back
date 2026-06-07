@@ -185,6 +185,9 @@ public:
     // Authenticate with an active license key
     bool LoginWithLicense(const std::string& licenseKey, const std::string& hwid = "");
 
+    // Authenticate with username and password
+    bool Login(const std::string& username, const std::string& password);
+
     // Activate an unused license key and create account
     bool ActivateLicense(const std::string& licenseKey,
                          const std::string& username,
@@ -306,6 +309,32 @@ Auth::Auth()
 }
 
 Auth::~Auth() {}
+
+bool Auth::Login(const std::string& username, const std::string& password) {
+    m_authenticated = false;
+    m_banned = false;
+
+    json body;
+    body["username"] = username;
+    body["password"] = password;
+
+    auto response = HttpPost(m_apiBase + L"/licenses/login", body.dump());
+    if (response.empty()) return false;
+
+    try {
+        auto resp = json::parse(response);
+        if (resp.value("success", false)) {
+            m_authenticated = true;
+            ParseLoginResponse(response);
+            return true;
+        }
+        m_lastError = resp.value("message", "Authentication failed");
+        if (m_lastError.find("banned") != std::string::npos) m_banned = true;
+    } catch (const std::exception& e) {
+        m_lastError = std::string("Parse error: ") + e.what();
+    }
+    return false;
+}
 
 bool Auth::LoginWithLicense(const std::string& licenseKey, const std::string& hwid) {
     m_authenticated = false;

@@ -1,6 +1,7 @@
 const AppUser = require('../models/AppUser');
 const Application = require('../models/Application');
 const License = require('../models/License');
+const Subscription = require('../models/Subscription');
 const Log = require('../models/Log');
 const { notifyUserBanned } = require('../utils/discordWebhook');
 const { findAuthorizedApp } = require('../utils/appAuthorization');
@@ -35,6 +36,16 @@ const createUser = async (req, res) => {
       if (count >= 10) return forbidden(res, 'Free plan limit: maximum 10 users per application');
     }
 
+    let subscription = null;
+    if (subscriptionId) {
+      subscription = await Subscription.findOne({ _id: subscriptionId, appId: app._id });
+      if (!subscription) return notFound(res, 'Subscription not found');
+      if (req.user.isManager && Array.isArray(req.user.allowedSubscriptions) && req.user.allowedSubscriptions.length > 0) {
+        const allowed = req.user.allowedSubscriptions.some((id) => id.toString() === subscription._id.toString());
+        if (!allowed) return forbidden(res, 'Subscription not allowed for this manager');
+      }
+    }
+
     const existing = await AppUser.findOne({ username, appId: app._id });
     if (existing) return conflict(res, 'Username already exists in this application');
 
@@ -42,7 +53,7 @@ const createUser = async (req, res) => {
       username,
       password,
       appId: app._id,
-      subscription: subscriptionId || null,
+      subscription: subscription ? subscription._id : null,
       expiresAt: expiresAt || null,
       ip: req.ip,
     });

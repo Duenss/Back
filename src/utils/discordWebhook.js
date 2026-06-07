@@ -1,5 +1,6 @@
 const axios = require('axios');
 const WebhookConfig = require('../models/WebhookConfig');
+const { normalizeIp } = require('./ipNormalizer');
 
 /**
  * Color codes for Discord embeds
@@ -101,11 +102,11 @@ const notifyLogin = (webhookUrl, { username, ip, appName, appId }) =>
     title: 'User Login',
     description: `**${username}** logged in successfully.`,
     fields: [
-      { name: 'IP Address', value: ip || 'Unknown', inline: true },
+      { name: 'IP Address', value: normalizeIp(ip) || 'Unknown', inline: true },
       { name: 'Application', value: appName || 'Unknown', inline: true },
     ],
     appName,
-    vars: { username, ip, appName },
+    vars: { username, ip: normalizeIp(ip), appName },
   }, appId);
 
 const notifyLoginFailed = (webhookUrl, { username, ip, reason, appName, appId }) =>
@@ -115,10 +116,10 @@ const notifyLoginFailed = (webhookUrl, { username, ip, reason, appName, appId })
     description: `Failed login attempt for **${username}**.`,
     fields: [
       { name: 'Reason', value: reason || 'Invalid credentials', inline: true },
-      { name: 'IP Address', value: ip || 'Unknown', inline: true },
+      { name: 'IP Address', value: normalizeIp(ip) || 'Unknown', inline: true },
     ],
     appName,
-    vars: { username, ip, reason, appName },
+    vars: { username, ip: normalizeIp(ip), reason, appName },
   }, appId);
 
 const notifyLicenseActivated = (webhookUrl, { licenseKey, username, ip, appName, appId }) =>
@@ -128,10 +129,10 @@ const notifyLicenseActivated = (webhookUrl, { licenseKey, username, ip, appName,
     description: `License key activated by **${username}**.`,
     fields: [
       { name: 'License Key', value: `\`${licenseKey}\``, inline: true },
-      { name: 'IP Address', value: ip || 'Unknown', inline: true },
+      { name: 'IP Address', value: normalizeIp(ip) || 'Unknown', inline: true },
     ],
     appName,
-    vars: { licenseKey, username, ip, appName },
+    vars: { licenseKey, username, ip: normalizeIp(ip), appName },
   }, appId);
 
 const notifyLicenseGenerated = (webhookUrl, { count, mask, appName, appId }) =>
@@ -152,9 +153,9 @@ const notifyHWIDError = (webhookUrl, { username, ip, appName, appId }) =>
     event: 'hwid_error',
     title: 'HWID Mismatch',
     description: `HWID mismatch detected for **${username}**.`,
-    fields: [{ name: 'IP Address', value: ip || 'Unknown', inline: true }],
+    fields: [{ name: 'IP Address', value: normalizeIp(ip) || 'Unknown', inline: true }],
     appName,
-    vars: { username, ip, appName },
+    vars: { username, ip: normalizeIp(ip), appName },
   }, appId);
 
 const notifyUserBanned = (webhookUrl, { username, reason, appName, appId }) =>

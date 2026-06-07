@@ -8,7 +8,7 @@ const {
   updateVariable,
   deleteVariable,
 } = require('../controllers/variableController');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requirePermission, validateManagerAppAccess, managerOwnerSubscriptionInheritance } = require('../middleware/auth');
 const validateApp = require('../middleware/validateApp');
 const { sdkLimiter } = require('../middleware/rateLimiter');
 
@@ -17,20 +17,21 @@ router.get('/name/:name', sdkLimiter, validateApp, getVariableByName);
 
 // Dashboard routes (require JWT)
 router.use(authenticate);
+router.use(managerOwnerSubscriptionInheritance); // Inherit owner subscription for plan limits
 
 // GET /api/variables
-router.get('/', getVariables);
+router.get('/', requirePermission('manageVariables'), getVariables);
 
 // POST /api/variables
-router.post('/', createVariable);
+router.post('/', requirePermission('manageVariables'), validateManagerAppAccess, createVariable);
 
 // GET /api/variables/:id
-router.get('/:id', getVariable);
+router.get('/:id', requirePermission('manageVariables'), getVariable);
 
 // PUT /api/variables/:id
-router.put('/:id', updateVariable);
+router.put('/:id', requirePermission('manageVariables'), updateVariable);
 
 // DELETE /api/variables/:id
-router.delete('/:id', deleteVariable);
+router.delete('/:id', requirePermission('manageVariables'), deleteVariable);
 
 module.exports = router;

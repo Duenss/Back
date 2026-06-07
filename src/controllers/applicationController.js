@@ -95,7 +95,12 @@ const getApp = async (req, res) => {
       return notFound(res, 'Application not found');
     }
 
-    const appWithSecret = await Application.findById(app._id).select('+appSecret');
+    let appSecret;
+    if (!req.user.isManager) {
+      const appWithSecret = await Application.findById(app._id).select('+appSecret');
+      appSecret = appWithSecret?.appSecret;
+    }
+
     const [userCount, licenseCount, activeUsers] = await Promise.all([
       AppUser.countDocuments({ appId: app._id }),
       License.countDocuments({ appId: app._id }),
@@ -106,7 +111,7 @@ const getApp = async (req, res) => {
       res,
       {
         ...app.toObject(),
-        appSecret: appWithSecret?.appSecret,
+        ...(appSecret ? { appSecret } : {}),
         userCount,
         licenseCount,
         activeUsers,
