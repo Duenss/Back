@@ -193,6 +193,15 @@ const login = async (req, res) => {
     const userResponse = user.toJSON ? user.toJSON() : user;
     userResponse.role = user.role || (user.isManager ? 'manager' : userResponse.role);
     userResponse.isManager = Boolean(user.isManager);
+    userResponse.permissions = userResponse.permissions || {
+      createUsers: false,
+      createLicenses: false,
+      manageVariables: false,
+      viewLogs: false,
+      viewStats: false,
+    };
+    userResponse.appIds = userResponse.appIds || [];
+    userResponse.allowedSubscriptions = userResponse.allowedSubscriptions || [];
 
     return success(res, { token, user: userResponse }, 'Login successful');
   } catch (err) {
@@ -288,6 +297,15 @@ const getMe = async (req, res) => {
       ...userData,
       role: userData.role || (req.user.isManager ? 'manager' : userData.role),
       isManager: Boolean(req.user.isManager),
+      permissions: userData.permissions || {
+        createUsers: false,
+        createLicenses: false,
+        manageVariables: false,
+        viewLogs: false,
+        viewStats: false,
+      },
+      appIds: userData.appIds || [],
+      allowedSubscriptions: userData.allowedSubscriptions || [],
     };
     return success(res, responseData, 'User retrieved');
   } catch (err) {
