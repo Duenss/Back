@@ -5,7 +5,8 @@ const Manager = require('../models/Manager');
 const Application = require('../models/Application');
 const Log = require('../models/Log');
 const Event = require('../models/Event');
-const { notifyLogin, notifyLoginFailed } = require('../utils/discordWebhook');
+const { notifyLogin, notifyLoginFailed, notifyPanelLogin, notifyPanelLoginFailed } = require('../utils/discordWebhook');
+const { normalizeIp } = require('../utils/ipNormalizer');
 const { success, created, badRequest, unauthorized, conflict, serverError } = require('../utils/apiResponse');
 
 /**
@@ -107,7 +108,6 @@ const login = async (req, res) => {
             description: `Panel login failed for ${id}`,
             ip: clientIp,
           });
-          // create temporary event for live-panel
           await Event.create({
             userId: null,
             appId: app._id,
@@ -118,11 +118,12 @@ const login = async (req, res) => {
             expiresAt: new Date(Date.now() + 300 * 1000),
           });
           if (app.webhookUrl) {
-            await notifyLoginFailed(app.webhookUrl, {
+            await notifyPanelLoginFailed(app.webhookUrl, {
               username: id,
-              ip: clientIp,
+              ip: normalizeIp(clientIp),
               reason: 'Invalid credentials',
               appName: app.name,
+              appId: app._id,
             });
           }
         })
@@ -143,11 +144,12 @@ const login = async (req, res) => {
             ip: clientIp,
           });
           if (app.webhookUrl) {
-            await notifyLoginFailed(app.webhookUrl, {
+            await notifyPanelLoginFailed(app.webhookUrl, {
               username: id,
-              ip: clientIp,
+              ip: normalizeIp(clientIp),
               reason: user.banReason || 'Account banned',
               appName: app.name,
+              appId: app._id,
             });
           }
         })
@@ -162,6 +164,10 @@ const login = async (req, res) => {
     const apps = user.isManager
       ? await Application.find({ _id: { $in: user.appIds || [] } })
       : await Application.find({ ownerId: user._id });
+
+    // Detectar re-login: si lastLogin existía antes de este save, es un re-login
+    const isReLogin = Boolean(user._doc?.lastLogin || user.lastLogin);
+
     await Promise.all(
       apps.map(async (app) => {
         await Log.create({
@@ -170,7 +176,6 @@ const login = async (req, res) => {
           description: `Panel login: ${user.username}`,
           ip: clientIp,
         });
-        // create temporary event for live-panel
         await Event.create({
           userId: user._id,
           appId: app._id,
@@ -181,10 +186,12 @@ const login = async (req, res) => {
           expiresAt: new Date(Date.now() + 300 * 1000),
         });
         if (app.webhookUrl) {
-          await notifyLogin(app.webhookUrl, {
+          await notifyPanelLogin(app.webhookUrl, {
             username: user.username,
-            ip: clientIp,
+            ip: normalizeIp(clientIp),
             appName: app.name,
+            appId: app._id,
+            isFirstLogin: !isReLogin,
           });
         }
       })

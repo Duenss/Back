@@ -32,7 +32,7 @@ const licenseSchema = new mongoose.Schema(
     },
     durationUnit: {
       type: String,
-      enum: ['hours', 'days', 'months', 'years', 'lifetime', null],
+      enum: ['seconds', 'minutes', 'hours', 'days', 'weeks', 'months', 'years', 'lifetime', null],
       default: null,
     },
     status: {
@@ -61,6 +61,11 @@ const licenseSchema = new mongoose.Schema(
       type: String,
       default: '',
       maxlength: [200, 'Note cannot exceed 200 characters'],
+    },
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
     },
   },
   {
@@ -99,10 +104,16 @@ licenseSchema.statics.calculateExpiry = function (duration, unit) {
   if (unit === 'lifetime') return null;
   const now = new Date();
   switch (unit) {
+    case 'seconds':
+      return new Date(now.getTime() + duration * 1000);
+    case 'minutes':
+      return new Date(now.getTime() + duration * 60 * 1000);
     case 'hours':
       return new Date(now.getTime() + duration * 60 * 60 * 1000);
     case 'days':
       return new Date(now.getTime() + duration * 24 * 60 * 60 * 1000);
+    case 'weeks':
+      return new Date(now.getTime() + duration * 7 * 24 * 60 * 60 * 1000);
     case 'months': {
       const d = new Date(now);
       d.setMonth(d.getMonth() + duration);

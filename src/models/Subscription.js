@@ -13,14 +13,6 @@ const subscriptionSchema = new mongoose.Schema(
       required: [true, 'Subscription level is required'],
       min: [0, 'Level must be 0 or greater'],
     },
-    duration: {
-      type: Number,
-      min: [1, 'Duration must be at least 1'],
-    },
-    durationUnit: {
-      type: String,
-      enum: ['hours', 'days', 'months', 'years', 'lifetime'],
-    },
     description: {
       type: String,
       default: '',

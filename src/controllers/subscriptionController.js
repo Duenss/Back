@@ -72,7 +72,7 @@ const getSubscriptions = async (req, res) => {
 const updateSubscription = async (req, res) => {
   try {
     const { id } = req.params;
-    const { appId, name, level, duration, durationUnit, description } = req.body;
+    const { appId, name, level, description } = req.body;
 
     if (!appId) return badRequest(res, 'appId is required');
 
@@ -84,8 +84,6 @@ const updateSubscription = async (req, res) => {
 
     if (name !== undefined) subscription.name = name;
     if (level !== undefined) subscription.level = level;
-    if (duration !== undefined) subscription.duration = duration;
-    if (durationUnit !== undefined) subscription.durationUnit = durationUnit;
     if (description !== undefined) subscription.description = description;
 
     await subscription.save();

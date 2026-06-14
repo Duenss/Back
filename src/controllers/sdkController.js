@@ -313,13 +313,15 @@ Auth::Auth()
 
 Auth::~Auth() {}
 
-bool Auth::Login(const std::string& username, const std::string& password) {
+bool Auth::Login(const std::string& username, const std::string& password, const std::string& hwid) {
     m_authenticated = false;
     m_banned = false;
+    const std::string& h = hwid.empty() ? m_hwid : hwid;
 
     json body;
     body["username"] = username;
     body["password"] = password;
+    body["hwid"]     = h;
 
     auto response = HttpPost(m_apiBase + L"/licenses/login", body.dump());
     if (response.empty()) return false;

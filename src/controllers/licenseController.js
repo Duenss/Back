@@ -65,11 +65,9 @@ const generateLicenses = async (req, res) => {
         const allowed = req.user.allowedSubscriptions.some((id) => id.toString() === subscription._id.toString());
         if (!allowed) return forbidden(res, 'Subscription not allowed for this manager');
       }
-      resolvedDuration = subscription.duration;
-      resolvedUnit = subscription.durationUnit;
     }
 
-    if (!resolvedUnit) return badRequest(res, 'durationUnit is required (or provide a subscriptionId)');
+    if (!resolvedUnit) return badRequest(res, 'durationUnit is required');
 
     // Get existing keys to avoid duplicates
     const existingKeys = await License.find({ appId: app._id }).distinct('key');
@@ -87,6 +85,7 @@ const generateLicenses = async (req, res) => {
       duration: resolvedDuration || null,
       durationUnit: resolvedUnit,
       note: note || '',
+      createdBy: req.user._id || req.user.id || null,
     }));
 
     const created_licenses = await License.insertMany(licenses);
@@ -100,7 +99,12 @@ const generateLicenses = async (req, res) => {
     });
 
     if (app.webhookUrl) {
-      notifyLicenseGenerated(app.webhookUrl, { count, mask, appName: app.name });
+      notifyLicenseGenerated(app.webhookUrl, {
+        count,
+        createdBy: req.user.username || req.user.email || 'Unknown',
+        appName: app.name,
+        appId: app._id,
+      });
     }
 
     return created(res, created_licenses, `${count} license(s) generated`);
@@ -131,6 +135,7 @@ const getLicenses = async (req, res) => {
       License.find(filter)
         .populate('subscription', 'name level')
         .populate('usedBy', 'username')
+        .populate('createdBy', 'username email')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(parseInt(limit)),

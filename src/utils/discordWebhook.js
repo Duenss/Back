@@ -135,17 +135,17 @@ const notifyLicenseActivated = (webhookUrl, { licenseKey, username, ip, appName,
     vars: { licenseKey, username, ip: normalizeIp(ip), appName },
   }, appId);
 
-const notifyLicenseGenerated = (webhookUrl, { count, mask, appName, appId }) =>
+const notifyLicenseGenerated = (webhookUrl, { count, createdBy, appName, appId }) =>
   sendWebhook(webhookUrl, {
     event: 'license_generated',
     title: 'Licenses Generated',
     description: `**${count}** license key(s) generated.`,
     fields: [
-      { name: 'Count', value: String(count), inline: true },
-      { name: 'Mask', value: mask || 'Default', inline: true },
+      { name: 'Count',      value: String(count),       inline: true },
+      { name: 'Created By', value: createdBy || 'Unknown', inline: true },
     ],
     appName,
-    vars: { count, mask, appName },
+    vars: { count, createdBy, appName },
   }, appId);
 
 const notifyHWIDError = (webhookUrl, { username, ip, appName, appId }) =>
@@ -168,6 +168,38 @@ const notifyUserBanned = (webhookUrl, { username, reason, appName, appId }) =>
     vars: { username, reason, appName },
   }, appId);
 
+const notifyPanelLogin = (webhookUrl, { username, ip, appName, appId, isFirstLogin }) =>
+  sendWebhook(webhookUrl, {
+    event: 'login_success',
+    title: isFirstLogin ? 'Panel Login' : 'Panel Re-Login',
+    description: isFirstLogin
+      ? `**${username}** inició sesión en el panel.`
+      : `**${username}** volvió a iniciar sesión en el panel.`,
+    fields: [
+      { name: 'IP Address',   value: normalizeIp(ip) || 'Unknown', inline: true },
+      { name: 'Application',  value: appName || 'Unknown',          inline: true },
+    ],
+    appName,
+    vars: { username, ip: normalizeIp(ip), appName },
+  }, appId);
+
+const notifyPanelReLogin = (webhookUrl, { username, ip, appName, appId }) =>
+  notifyPanelLogin(webhookUrl, { username, ip, appName, appId, isFirstLogin: false });
+
+const notifyPanelLoginFailed = (webhookUrl, { username, ip, reason, appName, appId }) =>
+  sendWebhook(webhookUrl, {
+    event: 'login_failed',
+    title: 'Panel - Intento Fallido',
+    description: `Intento de acceso fallido al panel por **${username}**.`,
+    fields: [
+      { name: 'Razón',       value: reason || 'Credenciales inválidas', inline: true },
+      { name: 'IP Address',  value: normalizeIp(ip) || 'Unknown',        inline: true },
+      { name: 'Application', value: appName || 'Unknown',                inline: true },
+    ],
+    appName,
+    vars: { username, ip: normalizeIp(ip), reason, appName },
+  }, appId);
+
 module.exports = {
   sendWebhook,
   notifyLogin,
@@ -176,4 +208,7 @@ module.exports = {
   notifyLicenseGenerated,
   notifyHWIDError,
   notifyUserBanned,
+  notifyPanelLogin,
+  notifyPanelReLogin,
+  notifyPanelLoginFailed,
 };
