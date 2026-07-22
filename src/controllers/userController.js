@@ -1,0 +1,314 @@
+const AppUser = require('../models/AppUser');
+const Application = require('../models/Application');
+const License = require('../models/License');
+const Subscription = require('../models/Subscription');
+const Log = require('../models/Log');
+const { notifyUserBanned } = require('../utils/discordWebhook');
+const { findAuthorizedApp } = require('../utils/appAuthorization');
+const {
+  success,
+  created,
+  badRequest,
+  notFound,
+  forbidden,
+  conflict,
+  serverError,
+} = require('../utils/apiResponse');
+
+/**
+ * POST /api/users
+ * Create an app user manually (without license activation)
+ */
+const createUser = async (req, res) => {
+  try {
+    const { appId, username, password, subscriptionId, expiresAt } = req.body;
+
+    if (!appId || !username || !password) {
+      return badRequest(res, 'appId, username, and password are required');
+    }
+
+    const app = await findAuthorizedApp(req.user, appId);
+    if (!app) return notFound(res, 'Application not found');
+
+    // Limite para usuarios normales
+    if (req.user.role === 'user' || req.user.role === 'manager') {
+      const count = await AppUser.countDocuments({ appId: app._id });
+      if (count >= 10) return forbidden(res, 'Free plan limit: maximum 10 users per application');
+    }
+
+    let subscription = null;
+    if (subscriptionId) {
+      subscription = await Subscription.findOne({ _id: subscriptionId, appId: app._id });
+      if (!subscription) return notFound(res, 'Subscription not found');
+      if (req.user.isManager && Array.isArray(req.user.allowedSubscriptions) && req.user.allowedSubscriptions.length > 0) {
+        const allowed = req.user.allowedSubscriptions.some((id) => id.toString() === subscription._id.toString());
+        if (!allowed) return forbidden(res, 'Subscription not allowed for this manager');
+      }
+    }
+
+    const existing = await AppUser.findOne({ username, appId: app._id });
+    if (existing) return conflict(res, 'Username already exists in this application');
+
+    const user = await AppUser.create({
+      username,
+      password,
+      appId: app._id,
+      subscription: subscription ? subscription._id : null,
+      expiresAt: expiresAt || null,
+      ip: req.ip,
+    });
+
+    await Log.create({
+      appId: app._id,
+      userId: user._id,
+      event: 'user_created',
+      description: `User ${username} created manually`,
+      ip: req.ip,
+    });
+
+    return created(res, user, 'User created successfully');
+  } catch (err) {
+    console.error('createUser error:', err);
+    if (err.code === 11000) return conflict(res, 'Username already exists');
+    return serverError(res, 'Failed to create user');
+  }
+};
+
+/**
+ * GET /api/users
+ * Get all users for an application
+ */
+const getUsers = async (req, res) => {
+  try {
+    const { appId, status, page = 1, limit = 50, search } = req.query;
+
+    if (!appId) return badRequest(res, 'appId query parameter is required');
+
+    const app = await findAuthorizedApp(req.user, appId);
+    if (!app) return notFound(res, 'Application not found');
+
+    const filter = { appId: app._id };
+    if (status) filter.status = status;
+    if (search) filter.username = { $regex: search, $options: 'i' };
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const [users, total] = await Promise.all([
+      AppUser.find(filter)
+        .populate('subscription', 'name level')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(parseInt(limit)),
+      AppUser.countDocuments(filter),
+    ]);
+
+    return success(res, {
+      users,
+      pagination: {
+        total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        pages: Math.ceil(total / parseInt(limit)),
+      },
+    });
+  } catch (err) {
+    console.error('getUsers error:', err);
+    return serverError(res, 'Failed to retrieve users');
+  }
+};
+
+/**
+ * DELETE /api/users/:id
+ * Delete an app user
+ */
+const deleteUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { appId } = req.query;
+
+    if (!appId) return badRequest(res, 'appId query parameter is required');
+
+    const app = await findAuthorizedApp(req.user, appId);
+    if (!app) return notFound(res, 'Application not found');
+
+    const user = await AppUser.findOne({ _id: id, appId: app._id });
+    if (!user) return notFound(res, 'User not found');
+
+    // Reset associated license
+    await License.updateOne(
+      { usedBy: user._id },
+      { $set: { status: 'unused', usedBy: null, usedAt: null, hwid: null } }
+    );
+
+    await user.deleteOne();
+
+    await Log.create({
+      appId: app._id,
+      event: 'user_deleted',
+      description: `User ${user.username} deleted`,
+      ip: req.ip,
+    });
+
+    return success(res, null, 'User deleted');
+  } catch (err) {
+    console.error('deleteUser error:', err);
+    return serverError(res, 'Failed to delete user');
+  }
+};
+
+/**
+ * POST /api/users/:id/ban
+ * Ban an app user
+ */
+const banUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { appId, reason } = req.body;
+
+    if (!appId) return badRequest(res, 'appId is required');
+
+    const app = await findAuthorizedApp(req.user, appId);
+    if (!app) return notFound(res, 'Application not found');
+
+    const user = await AppUser.findOne({ _id: id, appId: app._id });
+    if (!user) return notFound(res, 'User not found');
+
+    user.status = 'banned';
+    user.banReason = reason || 'No reason provided';
+    await user.save();
+
+    await Log.create({
+      appId: app._id,
+      userId: user._id,
+      event: 'user_banned',
+      description: `User ${user.username} banned. Reason: ${user.banReason}`,
+      ip: req.ip,
+    });
+
+    if (app.webhookUrl) {
+      notifyUserBanned(app.webhookUrl, { username: user.username, reason: user.banReason, appName: app.name });
+    }
+
+    return success(res, user, 'User banned');
+  } catch (err) {
+    console.error('banUser error:', err);
+    return serverError(res, 'Failed to ban user');
+  }
+};
+
+/**
+ * POST /api/users/:id/unban
+ * Unban an app user
+ */
+const unbanUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { appId } = req.body;
+
+    if (!appId) return badRequest(res, 'appId is required');
+
+    const app = await findAuthorizedApp(req.user, appId);
+    if (!app) return notFound(res, 'Application not found');
+
+    const user = await AppUser.findOne({ _id: id, appId: app._id });
+    if (!user) return notFound(res, 'User not found');
+
+    user.status = 'active';
+    user.banReason = null;
+    await user.save();
+
+    await Log.create({
+      appId: app._id,
+      userId: user._id,
+      event: 'user_unbanned',
+      description: `User ${user.username} unbanned`,
+      ip: req.ip,
+    });
+
+    return success(res, user, 'User unbanned');
+  } catch (err) {
+    console.error('unbanUser error:', err);
+    return serverError(res, 'Failed to unban user');
+  }
+};
+
+/**
+ * POST /api/users/:id/reset-hwid
+ * Reset HWID for an app user
+ */
+const resetHWID = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { appId } = req.body;
+
+    if (!appId) return badRequest(res, 'appId is required');
+
+    const app = await findAuthorizedApp(req.user, appId);
+    if (!app) return notFound(res, 'Application not found');
+
+    const user = await AppUser.findOne({ _id: id, appId: app._id });
+    if (!user) return notFound(res, 'User not found');
+
+    await AppUser.updateOne({ _id: user._id }, { $set: { hwid: null } });
+    await License.updateOne({ usedBy: user._id }, { $set: { hwid: null } });
+
+    await Log.create({
+      appId: app._id,
+      userId: user._id,
+      event: 'hwid_reset',
+      description: `HWID reset for user ${user.username}`,
+      ip: req.ip,
+    });
+
+    return success(res, null, 'HWID reset successfully');
+  } catch (err) {
+    console.error('resetHWID error:', err);
+    return serverError(res, 'Failed to reset HWID');
+  }
+};
+
+/**
+ * POST /api/users/:id/reset-password
+ * Reset password for an app user
+ */
+const resetPassword = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { appId, password } = req.body;
+
+    if (!appId || !password) {
+      return badRequest(res, 'appId and password are required');
+    }
+
+    const app = await findAuthorizedApp(req.user, appId);
+    if (!app) return notFound(res, 'Application not found');
+
+    const user = await AppUser.findOne({ _id: id, appId: app._id }).select('+password');
+    if (!user) return notFound(res, 'User not found');
+
+    user.password = password;
+    await user.save();
+
+    await Log.create({
+      appId: app._id,
+      userId: user._id,
+      event: 'password_reset',
+      description: `Password reset for user ${user.username}`,
+      ip: req.ip,
+    });
+
+    return success(res, null, 'Password reset successfully');
+  } catch (err) {
+    console.error('resetPassword error:', err);
+    return serverError(res, 'Failed to reset password');
+  }
+};
+
+module.exports = {
+  createUser,
+  getUsers,
+  deleteUser,
+  banUser,
+  unbanUser,
+  resetHWID,
+  resetPassword,
+};
