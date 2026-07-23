@@ -121,8 +121,9 @@ const authenticateKeyAuth = async ({
     license = await License.findOne(licenseQuery).populate('subscription');
   }
 
-  if (!license && !appUser) {
-    throw createAuthError(404, 'License key or user not found');
+  // Allow login with license-only (old flow) - don't require appUser
+  if (!license) {
+    throw createAuthError(404, 'License key not found');
   }
 
   const hashedHwid = hwid ? processHWID(hwid) : null;
